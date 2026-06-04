@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="description" content="探店地图 - 发现知名博主探访过的美食店铺">
+  <title>探店地图 - Food Explorer</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin="" />
+
+  <!-- Custom Styles -->
+  <link rel="stylesheet" href="css/style.css">
+
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗺️</text></svg>">
+</head>
+<body>
+
+  <div id="app">
+    <!-- ===== 顶部导航栏 ===== -->
+    <div class="top-bar">
+      <div class="logo">
+        🗺️ <span class="logo-text">探店地图</span>
+      </div>
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="searchInput" placeholder="搜索店名、菜品、博主...">
+      </div>
+      <div class="stats">
+        <div class="stat-item">
+          🏪 <span class="stat-value" id="statTotal">0</span> 家店
+        </div>
+        <div class="stat-item">
+          🎥 <span class="stat-value" id="statBloggers">0</span> 位博主
+        </div>
+        <div class="stat-item">
+          🍽️ <span class="stat-value" id="statCategories">0</span> 个品类
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 地图容器 ===== -->
+    <div id="map"></div>
+
+    <!-- ===== 侧边栏 - 店铺列表 ===== -->
+    <aside class="sidebar">
+      <button class="sidebar-toggle" title="折叠侧边栏">◀</button>
+      <div class="sidebar-header">
+        <h2>发现好店</h2>
+        <p class="subtitle">知名美食博主探访记录</p>
+      </div>
+      <div class="sidebar-content">
+        <!-- 动态渲染店铺卡片 -->
+      </div>
+    </aside>
+
+    <!-- ===== 底部品类筛选栏 ===== -->
+    <nav class="category-bar">
+      <!-- 动态渲染品类按钮 -->
+    </nav>
+
+    <!-- ===== 店铺详情面板 ===== -->
+    <div class="detail-overlay">
+      <!-- 动态渲染详情内容 -->
+    </div>
+    <div class="detail-backdrop"></div>
+
+    <!-- ===== Toast 提示 ===== -->
+    <div class="toast" id="toast"></div>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+          crossorigin=""></script>
+
+  <!-- 数据层 -->
+  <script src="js/data.js"></script>
+
+  <!-- 应用逻辑 -->
+  <script src="js/app.js"></script>
+
+</body>
+</html>
