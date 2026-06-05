@@ -360,10 +360,24 @@ def _get_video_text_content(platform_video_id):
                 pass
 
 
-def analyze_video(video_id, data_provider=None):
+def analyze_video(video_id, data_provider=None, progress_callback=None):
     """
     分析单个视频，提取店铺信息
+
+    参数:
+        video_id: 视频数据库ID
+        data_provider: 可选，直接提供视频数据（跳过数据库查询）
+        progress_callback: 可选，进度回调函数 callback(step_num, total_steps, step_name)
     """
+    TOTAL_STEPS = 9
+
+    def _progress(step, name):
+        """安全调用进度回调"""
+        if progress_callback:
+            try:
+                progress_callback(step, TOTAL_STEPS, name)
+            except Exception:
+                pass
     _log(f"{'='*50}")
     _log(f"开始分析视频 video_id={video_id}")
     _log(f"{'='*50}")
@@ -382,6 +396,7 @@ def analyze_video(video_id, data_provider=None):
         return {'success': False, 'error': '视频不存在'}
 
     _log(f"Step1: 视频信息 - title={video.get('title','')[:60]}, bvid={video.get('platform_video_id','')}, blogger_id={video.get('blogger_id','')}")
+    _progress(1, '获取视频信息')
 
     # Step 2: 构建分析内容
     content_parts = [f"【视频标题】{video['title']}"]
@@ -403,6 +418,8 @@ def analyze_video(video_id, data_provider=None):
         content_parts.append(f"【视频标签】{', '.join(tags)}")
         _log(f"Step2: 标签={tags}")
 
+    _progress(2, '构建分析内容')
+
     # Step 3: 获取视频文本内容
     bvid = video.get('platform_video_id', '')
     _log(f"Step3: 开始获取视频文本内容 bvid={bvid}")
@@ -413,11 +430,15 @@ def analyze_video(video_id, data_provider=None):
     else:
         _log("Step3: 未能获取文本内容, 仅使用元数据分析")
 
+    _progress(3, '获取视频文本')
+
     user_content = '\n\n'.join(content_parts)
     _log(f"Step4: 最终分析内容总长度={len(user_content)}字符")
+    _progress(4, '构建分析Prompt')
 
     # Step 5: 调用 LLM
     _log("Step5: 调用LLM分析...")
+    _progress(5, 'AI分析中（可能需要30-60秒）')
     result = call_llm([
         {'role': 'system', 'content': SYSTEM_PROMPT},
         {'role': 'user', 'content': user_content},
@@ -434,6 +455,7 @@ def analyze_video(video_id, data_provider=None):
         return {'success': False, 'error': result['error']}
 
     _log(f"Step5: LLM返回成功, 响应长度={len(result['content'])}")
+    _progress(6, 'AI分析完成，解析结果')
 
     # Step 6: 解析JSON
     _log("Step6: 解析LLM响应...")
@@ -460,11 +482,13 @@ def analyze_video(video_id, data_provider=None):
     if not data_provider:
         delete_stores_by_video(video_id)
         _log("Step7: 已清理该视频之前提取的店铺")
+    _progress(7, '清理旧数据')
 
     # Step 8: 提取店铺
     stores_data = parsed.get('stores', [])
     summary = parsed.get('summary', '')
     _log(f"Step8: 提取到 {len(stores_data)} 家店铺, summary={summary[:50] if summary else '无'}")
+    _progress(8, f'提取店铺信息（共{len(stores_data)}家）')
 
     store_ids = []
     for i, store in enumerate(stores_data):
@@ -535,7 +559,9 @@ def analyze_video(video_id, data_provider=None):
 
         new_status = 'analyzed' if store_ids else 'no_store'
         update_video_status(video_id, new_status)
-        _log(f"Step8: 视频状态更新为 {new_status}")
+        _log(f"Step9: 视频状态更新为 {new_status}")
+
+    _progress(9, '保存结果完成')
 
     _log(f"分析完成: success=True, stores={len(store_ids)}, summary={summary[:30] if summary else '无'}")
     _log(f"{'='*50}")

@@ -10,14 +10,17 @@ import io
 
 # 修复 Windows 控制台编码问题
 if sys.platform == 'win32':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
     # 确保 ffmpeg 在 PATH 中（Whisper 语音转文字需要）
     ffmpeg_path = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'ffmpeg')
     if os.path.isdir(ffmpeg_path) and ffmpeg_path not in os.environ.get('PATH', ''):
         os.environ['PATH'] = ffmpeg_path + os.pathsep + os.environ.get('PATH', '')
 
-from flask import Flask, request, jsonify, send_from_directory, make_response
+from flask import Flask, request, jsonify, send_from_directory, make_response, Response
+
+import queue
+import threading
 
 # 确保可以导入 backend 内部模块
 backend_dir = os.path.dirname(os.path.abspath(__file__))
@@ -41,6 +44,8 @@ from services.analyzer import analyze_video, batch_analyze
 
 app = Flask(__name__, static_folder=os.path.join(project_dir, 'frontend'))
 app.config['JSON_AS_ASCII'] = False
+# 开发环境禁用静态文件缓存
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
 FRONTEND_DIR = os.path.join(project_dir, 'frontend')
 
@@ -392,6 +397,53 @@ def api_analyze_video(video_id):
         return jsonify({'code': -1, 'error': result.get('error', '分析失败')}), 500
     except Exception as e:
         return jsonify({'code': -1, 'error': str(e)}), 500
+
+
+@app.route('/api/videos/<int:video_id>/analyze/stream', methods=['POST'])
+def api_analyze_video_stream(video_id):
+    """
+    流式分析单个视频 — 通过 SSE 实时推送分析进度
+    前端使用 fetch + ReadableStream 读取进度事件
+    """
+    q = queue.Queue()
+
+    def on_progress(step, total, name):
+        q.put({
+            'type': 'progress',
+            'step': step,
+            'total': total,
+            'name': name,
+        })
+
+    def run_analysis():
+        try:
+            result = analyze_video(video_id, progress_callback=on_progress)
+            q.put({
+                'type': 'done',
+                'success': result.get('success', False),
+                'stores_found': len(result.get('store_ids', [])),
+                'summary': result.get('summary', ''),
+                'error': result.get('error', ''),
+            })
+        except Exception as e:
+            q.put({'type': 'error', 'error': str(e)})
+
+    thread = threading.Thread(target=run_analysis, daemon=True)
+    thread.start()
+
+    def generate():
+        while True:
+            try:
+                msg = q.get(timeout=30)
+                yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+                if msg['type'] in ('done', 'error'):
+                    break
+            except queue.Empty:
+                # 心跳保持连接
+                yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+
+    return Response(generate(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 
 @app.route('/api/videos/batch-analyze', methods=['POST'])

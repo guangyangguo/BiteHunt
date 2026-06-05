@@ -7,6 +7,37 @@
 (function () {
   'use strict';
 
+  // ==================== 品类定义 ====================
+  const CATEGORIES = [
+    { key: 'all', icon: '🏷️', label: '全部' },
+    { key: '火锅', icon: '🫕', label: '火锅' },
+    { key: '川菜', icon: '🌶️', label: '川菜' },
+    { key: '小吃', icon: '🥟', label: '小吃' },
+    { key: '面馆', icon: '🍜', label: '面馆' },
+    { key: '烧烤', icon: '🍢', label: '烧烤' },
+    { key: '甜品饮品', icon: '🍰', label: '甜品饮品' },
+    { key: '创意料理', icon: '✨', label: '创意料理' },
+    { key: '轻食简餐', icon: '🥗', label: '轻食简餐' },
+    { key: '日料', icon: '🍣', label: '日料' },
+    { key: '西餐', icon: '🥩', label: '西餐' },
+    { key: '其他', icon: '🍽️', label: '其他' },
+  ];
+
+  // 品类对应颜色
+  const CATEGORY_COLORS = {
+    '火锅': '#e74c3c',
+    '川菜': '#e67e22',
+    '小吃': '#f39c12',
+    '面馆': '#f1c40f',
+    '烧烤': '#c0392b',
+    '甜品饮品': '#e91e63',
+    '创意料理': '#9b59b6',
+    '轻食简餐': '#2ecc71',
+    '日料': '#3498db',
+    '西餐': '#1abc9c',
+    '其他': '#95a5a6',
+  };
+
   // ==================== 状态管理 ====================
   const state = {
     currentCategory: 'all',
@@ -47,6 +78,7 @@
   let markersGroup;
 
   async function init() {
+    console.log('[tandian] init() 开始执行，即将调用 loadData()');
     showLoading(true);
     initMap();
     initCategories();
@@ -63,6 +95,7 @@
   }
 
   async function loadData() {
+    console.log('[tandian] loadData() 开始请求 API...');
     try {
       // 并行加载店铺和统计
       const [stores, stats] = await Promise.all([
@@ -89,13 +122,7 @@
     } catch (err) {
       console.error('加载数据失败:', err);
       showToast('⚠️ 数据加载失败，请确认后端服务已启动');
-      // 回退到静态数据
-      if (typeof EXPLORE_DATA !== 'undefined') {
-        state.allStoresCache = EXPLORE_DATA.stores || [];
-        renderAllMarkers(state.allStoresCache);
-        renderStoreList(state.allStoresCache);
-        updateStatsLocal();
-      }
+      // 静态数据文件已移除，显示错误提示
     }
   }
 
@@ -608,6 +635,12 @@
 
   // ==================== 加载状态 ====================
   function showLoading(show) {
+    // 清除之前的自动超时定时器
+    if (dom._loadingTimeout) {
+      clearTimeout(dom._loadingTimeout);
+      dom._loadingTimeout = null;
+    }
+
     if (!dom.loadingOverlay && show) {
       dom.loadingOverlay = document.createElement('div');
       dom.loadingOverlay.className = 'loading-overlay';
@@ -623,7 +656,15 @@
         display:flex;align-items:center;justify-content:center;
       `;
       document.body.appendChild(dom.loadingOverlay);
+
+      // 安全阀：20 秒后自动隐藏，防止永久卡在 loading
+      dom._loadingTimeout = setTimeout(() => {
+        console.warn('Loading timeout — force hiding overlay');
+        showLoading(false);
+        showToast('⚠️ 加载超时，请检查后端服务是否正常');
+      }, 20000);
     }
+
     if (dom.loadingOverlay && !show) {
       dom.loadingOverlay.style.opacity = '0';
       setTimeout(() => {

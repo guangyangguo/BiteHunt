@@ -281,7 +281,6 @@
   <div class="toast-admin" id="adminToast"></div>
 
   <script src="js/api.js"></script>
-  <script src="js/data.js"></script>
   <script>
     // ==================== 标签页切换 ====================
     function switchTab(name) {
@@ -458,17 +457,32 @@
       return { new: '待分析', analyzed: '已分析', no_store: '无店铺', skipped: '已跳过' }[s] || s;
     }
 
+    /**
+     * 分析单个视频 — 流式获取步骤级进度
+     */
     async function analyzeVideo(vid) {
-      showAnalyzeProgress(true, 1);
-      document.getElementById('progressCurrent').textContent = '视频ID: ' + vid + ' - 分析中...';
+      // 进度条显示 9 个步骤
+      showAnalyzeProgress(true, 9);
+      document.getElementById('progressText').textContent = '0 / 9 步';
+      document.getElementById('progressCurrent').textContent = '准备分析...';
+
       try {
-        const result = await API.analyzeVideo(vid);
+        const result = await API.analyzeVideoStream(vid, (p) => {
+          updateProgress(p.step, p.total);
+          document.getElementById('progressText').textContent = p.step + ' / ' + p.total + ' 步';
+          document.getElementById('progressCurrent').textContent = p.name;
+        });
+
         showAnalyzeProgress(false);
-        toast(result.message, 'success');
+        const msg = `分析完成，识别到 ${result.stores_found} 家店铺`;
+        toast(msg, 'success');
         loadVideos();
         // 通知地图刷新
         if (window.opener && window.opener.APP) window.opener.APP.refreshData();
-      } catch (e) { showAnalyzeProgress(false); toast('分析失败: ' + e.message, 'error'); }
+      } catch (e) {
+        showAnalyzeProgress(false);
+        toast('分析失败: ' + e.message, 'error');
+      }
     }
 
     // ==================== 批量分析 ====================
@@ -505,27 +519,41 @@
       document.getElementById('selectedCount').textContent = count ? `已选 ${count} 个视频` : '未选择视频';
     }
 
+    /**
+     * 批量分析 — 逐个流式分析，进度条显示视频级进度 + 当前视频步骤详情
+     */
     async function batchAnalyze() {
       const ids = [...document.querySelectorAll('.analyze-checkbox:checked')].map(cb => parseInt(cb.value));
       if (!ids.length) return toast('请先选择视频', 'error');
+
       showAnalyzeProgress(true, ids.length);
-      document.getElementById('progressCurrent').textContent = '开始批量分析 ' + ids.length + ' 个视频...'
+      document.getElementById('progressText').textContent = '0 / ' + ids.length + ' 个视频';
+      document.getElementById('progressCurrent').textContent = '开始批量分析...';
+
       let done = 0;
       for (const vid of ids) {
         updateProgress(done, ids.length);
-        document.getElementById('progressCurrent').textContent = '视频ID: ' + vid;
-        try { await API.analyzeVideo(vid); } catch (e) {}
-        done++;
+        document.getElementById('progressText').textContent = done + ' / ' + ids.length + ' 个视频';
+
+        try {
+          await API.analyzeVideoStream(vid, (p) => {
+            document.getElementById('progressCurrent').textContent =
+              `视频 #${vid} — ${p.name} (${p.step}/${p.total})`;
+          });
+          done++;
+        } catch (e) {
+          // 跳过失败的视频，继续下一个
+          done++;
+          document.getElementById('progressCurrent').textContent =
+            `视频 #${vid} — ⚠️ 失败 (${e.message.slice(0, 40)})`;
+          await new Promise(r => setTimeout(r, 800)); // 让用户看到错误
+        }
       }
+
       updateProgress(done, ids.length);
+      document.getElementById('progressText').textContent = done + ' / ' + ids.length + ' 个视频';
       document.getElementById('progressCurrent').textContent = '分析完成！';
-      setTimeout(() => { showAnalyzeProgress(false); loadAnalyzeList(); loadVideos(); }, 1000);
-      try {
-        const result = await API.batchAnalyze(ids);
-        toast(result.message, 'success');
-        loadAnalyzeList();
-        loadVideos();
-      } catch (e) { toast('批量分析失败', 'error'); }
+      setTimeout(() => { showAnalyzeProgress(false); loadAnalyzeList(); loadVideos(); }, 1500);
     }
 
     // ==================== 店铺管理 ====================
