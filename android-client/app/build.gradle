@@ -1,0 +1,23 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "com.tandian.client"
+    compileSdk 35
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    defaultConfig {
+        applicationId "com.tandian.client"
+        minSdk 23
+        targetSdk 35
+        versionCode 1
+        versionName "1.0"
+
+        def webUrl = providers.gradleProperty("TANDIAN_WEB_URL").getOrElse("http://10.0.2.2:5000/")
+        buildConfigField "String", "TANDIAN_WEB_URL", "\"${webUrl}\""
+    }
+}

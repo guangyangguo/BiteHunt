@@ -43,7 +43,7 @@
     currentCategory: 'all',
     searchQuery: '',
     activeStoreId: null,
-    sidebarVisible: true,
+    sidebarVisible: false,
     detailOpen: false,
     markers: [],
     filteredStores: [],
@@ -308,6 +308,7 @@
   function openDetail(storeId) {
     const store = state.allStoresCache.find((s) => s.id === storeId);
     if (!store) return;
+    setSheetExpanded(false);
 
     // 兼容新旧数据格式
     const bloggerName = store.blogger_name || store.bloggerName || '未知博主';
@@ -598,11 +599,18 @@
 
   // ==================== 侧边栏折叠 ====================
   function initSidebarToggle() {
+    setSheetExpanded(state.sidebarVisible);
     dom.sidebarToggle.addEventListener('click', () => {
-      state.sidebarVisible = !state.sidebarVisible;
-      dom.sidebar.classList.toggle('collapsed', !state.sidebarVisible);
-      dom.sidebarToggle.textContent = state.sidebarVisible ? '◀' : '▶';
+      setSheetExpanded(!state.sidebarVisible);
     });
+  }
+
+  function setSheetExpanded(expanded) {
+    state.sidebarVisible = expanded;
+    dom.sidebar.classList.toggle('collapsed', !expanded);
+    dom.sidebarToggle.textContent = expanded ? '⌄' : '⌃';
+    dom.sidebarToggle.title = expanded ? '收起店铺列表' : '展开店铺列表';
+    dom.sidebarToggle.setAttribute('aria-label', dom.sidebarToggle.title);
   }
 
   // ==================== 详情关闭 ====================

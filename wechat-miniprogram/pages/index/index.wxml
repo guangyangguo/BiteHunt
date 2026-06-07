@@ -1,0 +1,145 @@
+<view class="page">
+  <map
+    id="storeMap"
+    class="map"
+    latitude="{{mapCenter.latitude}}"
+    longitude="{{mapCenter.longitude}}"
+    scale="{{mapScale}}"
+    markers="{{markers}}"
+    show-location
+    bindmarkertap="onMarkerTap"
+    bindtap="onMapTap"
+  />
+
+  <view class="top-card">
+    <view class="brand">⌖</view>
+    <view class="search-wrap">
+      <text class="search-icon">⌕</text>
+      <input
+        class="search-input"
+        value="{{searchQuery}}"
+        placeholder="搜索店名、菜品、博主"
+        confirm-type="search"
+        bindinput="onSearchInput"
+      />
+    </view>
+    <button class="locate-btn {{locating ? 'loading' : ''}}" bindtap="locateUser">◎</button>
+  </view>
+
+  <scroll-view class="category-bar {{sheetExpanded || detailOpen ? 'hidden' : ''}}" scroll-x enhanced show-scrollbar="{{false}}">
+    <view class="category-inner">
+      <button
+        wx:for="{{categories}}"
+        wx:key="key"
+        class="category-chip {{currentCategory === item.key ? 'active' : ''}}"
+        data-key="{{item.key}}"
+        bindtap="onCategoryTap"
+      >
+        <text class="category-icon">{{item.icon}}</text>
+        <text class="category-label">{{item.label}}</text>
+        <text wx:if="{{item.count !== undefined && item.key !== 'all'}}" class="category-count">{{item.count}}</text>
+      </button>
+    </view>
+  </scroll-view>
+
+  <view class="sheet {{sheetExpanded ? 'expanded' : 'collapsed'}}">
+    <view class="sheet-handle"></view>
+    <view class="sheet-header" bindtap="toggleSheet">
+      <view>
+        <view class="sheet-title">{{filteredStores.length ? '发现 ' + filteredStores.length + ' 家好店' : '没有找到店铺'}}</view>
+        <view class="sheet-subtitle">知名美食博主探访记录</view>
+      </view>
+      <button class="sheet-toggle">{{sheetExpanded ? '⌄' : '⌃'}}</button>
+    </view>
+
+    <scroll-view class="store-list" scroll-y enhanced show-scrollbar="{{false}}">
+      <view wx:if="{{loading}}" class="empty-state">正在加载店铺...</view>
+      <view wx:if="{{!loading && loadError}}" class="empty-state">
+        <text>{{loadError}}</text>
+        <button class="retry-btn" bindtap="loadData">重试</button>
+      </view>
+      <view wx:if="{{!loading && !loadError && !filteredStores.length}}" class="empty-state">没有找到匹配的店铺</view>
+      <block wx:if="{{!loading && !loadError && filteredStores.length}}">
+        <view
+          wx:for="{{filteredStores}}"
+          wx:key="id"
+          class="store-card {{activeStoreId === item.id ? 'active' : ''}}"
+          data-id="{{item.id}}"
+          bindtap="selectStore"
+        >
+          <view class="card-main">
+            <view class="store-name">{{item.name}}</view>
+            <view class="store-rating">{{item.ratingText}}</view>
+          </view>
+          <view class="store-meta">
+            <text>{{item.category || '未分类'}}</text>
+            <text>¥{{item.avg_price || '-' }}/人</text>
+            <text>{{item.blogger_name || '未知博主'}}</text>
+          </view>
+          <view class="store-address">{{item.address || '地址待补充'}}</view>
+        </view>
+      </block>
+    </scroll-view>
+  </view>
+
+  <view wx:if="{{detailOpen}}" class="detail-backdrop" bindtap="closeDetail"></view>
+  <view class="detail-panel {{detailOpen ? 'open' : ''}}">
+    <view wx:if="{{selectedStore}}" class="detail-content">
+      <view class="detail-handle"></view>
+      <view class="detail-header">
+        <view>
+          <view class="detail-name">{{selectedStore.name}}</view>
+          <view class="detail-category">{{selectedStore.category || '未分类'}}</view>
+        </view>
+        <button class="detail-close" bindtap="closeDetail">×</button>
+      </view>
+
+      <scroll-view class="detail-body" scroll-y enhanced show-scrollbar="{{false}}">
+        <view class="detail-grid">
+          <view class="info-box">
+            <text class="label">评分</text>
+            <text class="value">{{selectedStore.ratingText}}</text>
+          </view>
+          <view class="info-box">
+            <text class="label">人均</text>
+            <text class="value">¥{{selectedStore.avg_price || '-'}}</text>
+          </view>
+        </view>
+
+        <view class="section">
+          <view class="section-title">地址</view>
+          <view class="section-text">{{selectedStore.address || '地址待补充'}}</view>
+          <button wx:if="{{selectedStore.hasCoords}}" class="primary-btn" bindtap="focusSelectedStore">定位到地图</button>
+        </view>
+
+        <view wx:if="{{selectedStore.recommend_dishes.length}}" class="section">
+          <view class="section-title">推荐菜品</view>
+          <view class="tag-row">
+            <text wx:for="{{selectedStore.recommend_dishes}}" wx:key="*this" class="tag">{{item}}</text>
+          </view>
+        </view>
+
+        <view wx:if="{{selectedStore.tags.length}}" class="section">
+          <view class="section-title">标签</view>
+          <view class="tag-row">
+            <text wx:for="{{selectedStore.tags}}" wx:key="*this" class="tag subtle">{{item}}</text>
+          </view>
+        </view>
+
+        <view class="section">
+          <view class="section-title">探店来源</view>
+          <view class="source-box">
+            <view class="source-icon">🎥</view>
+            <view>
+              <view class="source-name">{{selectedStore.blogger_name || '未知博主'}}</view>
+              <view class="source-meta">来自视频分析记录</view>
+            </view>
+          </view>
+          <view wx:if="{{selectedStore.note}}" class="note">{{selectedStore.note}}</view>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+
+  <view wx:if="{{toast}}" class="toast">{{toast}}</view>
+</view>

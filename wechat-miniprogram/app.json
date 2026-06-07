@@ -1,0 +1,21 @@
+{
+  "pages": [
+    "pages/index/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "探店地图",
+    "navigationBarBackgroundColor": "#0D1016",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#0D1016",
+    "backgroundTextStyle": "dark"
+  },
+  "permission": {
+    "scope.userLocation": {
+      "desc": "用于在地图中显示你的位置并辅助查看附近店铺"
+    }
+  },
+  "networkTimeout": {
+    "request": 15000
+  },
+  "sitemapLocation": "sitemap.json"
+}
