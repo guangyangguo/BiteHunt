@@ -7,6 +7,7 @@
     scale="{{mapScale}}"
     markers="{{markers}}"
     show-location
+    bindregionchange="onRegionChange"
     bindmarkertap="onMarkerTap"
     bindtap="onMapTap"
   />
@@ -25,7 +26,6 @@
         bindinput="onSearchInput"
       />
     </view>
-    <button class="locate-btn {{locating ? 'loading' : ''}}" bindtap="locateUser">◎</button>
   </view>
 
   <scroll-view class="category-bar {{sheetExpanded || detailOpen ? 'hidden' : ''}}" scroll-x enhanced show-scrollbar="{{false}}">

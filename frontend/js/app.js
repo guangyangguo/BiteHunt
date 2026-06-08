@@ -46,7 +46,9 @@
     sidebarVisible: false,
     detailOpen: false,
     markers: [],
+    markerClusters: {},
     filteredStores: [],
+    baseFilteredStores: [],
     allStoresCache: [],    // 全量店铺缓存（来自API）
     bloggersCache: [],     // 博主缓存
   };
@@ -105,6 +107,7 @@
 
       state.allStoresCache = stores;
       state.filteredStores = stores;
+      state.baseFilteredStores = stores;
 
       // 更新统计
       if (stats) {
@@ -116,8 +119,7 @@
       }
 
       // 渲染
-      renderAllMarkers(stores);
-      renderStoreList(stores);
+      applyStoreResults(stores, { fitBounds: true });
       updateCategoryCounts(stores);
     } catch (err) {
       console.error('加载数据失败:', err);
@@ -270,14 +272,56 @@
     });
   }
 
+  function createClusterIcon(stores) {
+    const topStore = stores.slice().sort((a, b) => Number(b.rating || 0) - Number(a.rating || 0))[0];
+    const color = CATEGORY_COLORS[topStore?.category] || '#ff6b35';
+    const count = stores.length;
+    const size = count >= 10 ? 52 : 46;
+
+    return L.divIcon({
+      className: 'cluster-marker',
+      html: `
+        <div class="cluster-bubble" style="--cluster-color:${color};width:${size}px;height:${size}px;">
+          <span>${count}</span>
+          <small>家</small>
+        </div>
+      `,
+      iconSize: [size, size],
+      iconAnchor: [size / 2, size / 2],
+    });
+  }
+
   function renderAllMarkers(stores) {
     const data = stores || state.allStoresCache;
     markersGroup.clearLayers();
     state.markers = [];
+    state.markerClusters = {};
 
-    data.forEach((store) => {
+    const markerStores = data.filter(hasValidCoords);
+    const markerItems = buildMarkerItems(markerStores);
+
+    markerItems.forEach((item) => {
+      if (item.type === 'cluster') {
+        const marker = L.marker(item.latLng, {
+          icon: createClusterIcon(item.stores),
+          clusterId: item.id,
+        });
+
+        state.markerClusters[item.id] = item.stores;
+        marker.on('click', () => openCluster(item.id));
+        marker.bindTooltip(`该区域 ${item.stores.length} 家店`, {
+          direction: 'top',
+          offset: [0, -24],
+          className: 'marker-tooltip',
+          opacity: 0.9,
+        });
+        markersGroup.addLayer(marker);
+        return;
+      }
+
+      const store = item.store;
       // 跳过没有有效坐标的店铺
-      if (!store.lat || !store.lng || (store.lat === 0 && store.lng === 0)) {
+      if (!hasValidCoords(store)) {
         return;
       }
 
@@ -322,7 +366,95 @@
   }
 
   function updateVisibleMarkers() {
-    // 在高缩放级别时不做额外处理，leaflet 自动优化渲染
+    refreshViewportStores();
+  }
+
+  function applyStoreResults(stores, options = {}) {
+    state.baseFilteredStores = stores;
+    if (options.fitBounds) {
+      renderAllMarkers(stores);
+      renderStoreList(stores);
+      fitStoresBounds(stores, options.maxZoom || 14);
+      return;
+    }
+    refreshViewportStores({ fallbackStores: stores });
+  }
+
+  function refreshViewportStores(options = {}) {
+    const base = state.baseFilteredStores.length ? state.baseFilteredStores : state.allStoresCache;
+    const visibleStores = filterStoresInMapBounds(base);
+    const stores = map ? visibleStores : (options.fallbackStores || base);
+    renderAllMarkers(stores);
+    renderStoreList(stores);
+  }
+
+  function filterStoresInMapBounds(stores) {
+    if (!map) return stores;
+    const bounds = map.getBounds();
+    return stores.filter((store) => hasValidCoords(store) && bounds.contains([Number(store.lat), Number(store.lng)]));
+  }
+
+  function buildMarkerItems(stores) {
+    if (map.getZoom() >= 16 || stores.length <= 1) {
+      return stores.map((store) => ({ type: 'store', store }));
+    }
+
+    const cellSize = getClusterCellSize(map.getZoom());
+    const grouped = stores.reduce((acc, store) => {
+      const key = `${Math.floor(Number(store.lat) / cellSize)}:${Math.floor(Number(store.lng) / cellSize)}`;
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(store);
+      return acc;
+    }, {});
+
+    let clusterIndex = 0;
+    const items = [];
+    Object.keys(grouped).forEach((key) => {
+      const group = grouped[key];
+      if (group.length === 1) {
+        items.push({ type: 'store', store: group[0] });
+        return;
+      }
+
+      const lat = group.reduce((sum, store) => sum + Number(store.lat), 0) / group.length;
+      const lng = group.reduce((sum, store) => sum + Number(store.lng), 0) / group.length;
+      items.push({
+        type: 'cluster',
+        id: `cluster-${clusterIndex++}`,
+        stores: group,
+        latLng: [lat, lng],
+      });
+    });
+    return items;
+  }
+
+  function getClusterCellSize(zoom) {
+    if (zoom <= 10) return 0.16;
+    if (zoom <= 12) return 0.08;
+    if (zoom <= 14) return 0.035;
+    return 0.016;
+  }
+
+  function openCluster(clusterId) {
+    const stores = state.markerClusters[clusterId] || [];
+    fitStoresBounds(stores, 17);
+    setSheetExpanded(false);
+  }
+
+  function fitStoresBounds(stores, maxZoom = 15) {
+    const points = stores.filter(hasValidCoords).map((store) => [Number(store.lat), Number(store.lng)]);
+    if (!points.length) return;
+    if (points.length === 1) {
+      map.flyTo(points[0], Math.min(Math.max(map.getZoom(), 15), maxZoom), { duration: 0.6 });
+      return;
+    }
+    map.fitBounds(L.latLngBounds(points).pad(0.18), { maxZoom });
+  }
+
+  function hasValidCoords(store) {
+    const lat = Number(store?.lat);
+    const lng = Number(store?.lng);
+    return Boolean(lat && lng && !(lat === 0 && lng === 0));
   }
 
   // ==================== 店铺高亮 ====================
@@ -348,13 +480,13 @@
         marker.setZIndexOffset(1000);
         // 飞行动画到该位置
         if (store.lat && store.lng && !(store.lat === 0 && store.lng === 0)) {
-          map.flyTo([store.lat, store.lng], Math.max(map.getZoom(), 15), {
+          map.flyTo([store.lat, store.lng], Math.max(map.getZoom(), 16), {
             duration: 0.8,
           });
         }
       } else if (store.lat && store.lng && !(store.lat === 0 && store.lng === 0)) {
         // 有坐标但没有marker（可能被过滤），直接飞行
-        map.flyTo([store.lat, store.lng], Math.max(map.getZoom(), 15), {
+        map.flyTo([store.lat, store.lng], Math.max(map.getZoom(), 16), {
           duration: 0.8,
         });
       }
@@ -614,21 +746,13 @@
     // 从API加载（服务端筛选）
     try {
       const stores = await API.getStores(category);
-      state.filteredStores = stores;
-
       // 本地再搜索过滤
       let filtered = stores;
       if (state.searchQuery) {
         filtered = filtered.filter((s) => matchSearch(s, state.searchQuery));
       }
 
-      renderAllMarkers(filtered);
-      renderStoreList(filtered);
-
-      if (filtered.length > 0) {
-        const group = L.featureGroup(state.markers);
-        map.fitBounds(group.getBounds().pad(0.15), { maxZoom: 15 });
-      }
+      applyStoreResults(filtered, { fitBounds: true, maxZoom: 15 });
     } catch (err) {
       // 回退到本地筛选
       let filtered = state.allStoresCache;
@@ -638,8 +762,7 @@
       if (state.searchQuery) {
         filtered = filtered.filter((s) => matchSearch(s, state.searchQuery));
       }
-      renderAllMarkers(filtered);
-      renderStoreList(filtered);
+      applyStoreResults(filtered, { fitBounds: true, maxZoom: 15 });
     }
   }
 
@@ -677,13 +800,7 @@
       filtered = filtered.filter((s) => matchSearch(s, state.searchQuery));
     }
 
-    renderAllMarkers(filtered);
-    renderStoreList(filtered);
-
-    if (filtered.length > 0 && state.searchQuery) {
-      const group = L.featureGroup(state.markers);
-      map.fitBounds(group.getBounds().pad(0.15), { maxZoom: 15 });
-    }
+    applyStoreResults(filtered, { fitBounds: Boolean(state.searchQuery), maxZoom: 15 });
   }
 
   function matchSearch(store, query) {

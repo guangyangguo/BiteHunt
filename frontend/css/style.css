@@ -279,6 +279,43 @@ ul, ol { list-style: none; }
   animation-duration: 1s;
 }
 
+.cluster-marker {
+  background: transparent;
+  border: none;
+}
+
+.cluster-bubble {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-radius: 50%;
+  background: var(--cluster-color, var(--accent));
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  color: #fff;
+  box-shadow: 0 0 0 6px rgba(255, 107, 53, 0.18),
+              0 10px 26px rgba(0, 0, 0, 0.34);
+  font-weight: 800;
+  transition: transform var(--transition-spring), box-shadow var(--transition);
+}
+
+.cluster-bubble span {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.cluster-bubble small {
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.9;
+}
+
+.cluster-marker:hover .cluster-bubble {
+  transform: scale(1.12);
+  box-shadow: 0 0 0 8px rgba(255, 107, 53, 0.22),
+              0 14px 32px rgba(0, 0, 0, 0.42);
+}
+
 /* Cluster marker */
 .marker-cluster {
   position: relative;

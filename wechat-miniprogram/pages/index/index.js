@@ -26,6 +26,8 @@ const CATEGORY_COLORS = {
   "其他": "#95a5a6"
 };
 
+const CLUSTER_ID_BASE = 1000000;
+
 Page({
   data: {
     loading: true,
@@ -49,6 +51,11 @@ Page({
   onLoad() {
     this.loadData();
     this.locateUser({ silent: true });
+  },
+
+  onReady() {
+    this.mapContext = wx.createMapContext("storeMap", this);
+    this.refreshViewportStores();
   },
 
   async loadData() {
@@ -94,7 +101,20 @@ Page({
 
   onMarkerTap(event) {
     const markerId = event.detail.markerId;
+    if (this.markerClusters && this.markerClusters[markerId]) {
+      this.openCluster(markerId);
+      return;
+    }
     this.openStore(markerId);
+  },
+
+  onRegionChange(event) {
+    if (event.type !== "end") return;
+    if (event.detail && event.detail.scale) {
+      this.setData({ mapScale: event.detail.scale });
+    }
+    clearTimeout(this.regionTimer);
+    this.regionTimer = setTimeout(() => this.refreshViewportStores(), 180);
   },
 
   selectStore(event) {
@@ -118,6 +138,27 @@ Page({
     }
     this.setData(updates);
     this.applyFilters();
+    this.focusStoreOnMap(store);
+  },
+
+  openCluster(markerId) {
+    const stores = this.markerClusters[markerId] || [];
+    const points = stores.map(store => ({ latitude: store.lat, longitude: store.lng }));
+    if (!points.length) return;
+
+    if (this.mapContext && points.length > 1) {
+      this.mapContext.includePoints({
+        points,
+        padding: [120, 80, 220, 80]
+      });
+    } else {
+      const store = stores[0];
+      this.setData({
+        mapCenter: { latitude: store.lat, longitude: store.lng },
+        mapScale: Math.min(this.data.mapScale + 2, 18)
+      });
+    }
+    this.setData({ sheetExpanded: false, detailOpen: false });
   },
 
   closeDetail() {
@@ -132,6 +173,7 @@ Page({
       mapScale: 16,
       detailOpen: false
     });
+    this.focusStoreOnMap(store);
     this.showToast("已定位到店铺");
   },
 
@@ -185,9 +227,61 @@ Page({
       filtered = filtered.filter(store => matchSearch(store, query));
     }
 
+    this.baseFilteredStores = filtered;
+    this.refreshViewportStores({ fallbackStores: filtered });
+  },
+
+  refreshViewportStores(options = {}) {
+    const base = this.baseFilteredStores || this.data.stores || [];
+    const fallbackStores = options.fallbackStores || base;
+
+    if (!this.mapContext) {
+      this.setVisibleStores(fallbackStores);
+      return;
+    }
+
+    this.mapContext.getRegion({
+      success: region => {
+        const visible = filterStoresInRegion(base, region);
+        this.updateScaleThenSetVisibleStores(visible);
+      },
+      fail: () => this.setVisibleStores(fallbackStores)
+    });
+  },
+
+  updateScaleThenSetVisibleStores(stores) {
+    if (!this.mapContext || !this.mapContext.getScale) {
+      this.setVisibleStores(stores);
+      return;
+    }
+    this.mapContext.getScale({
+      success: res => {
+        const scale = Number(res && res.scale);
+        if (scale) {
+          this.setData({ mapScale: scale });
+          this.setVisibleStores(stores, scale);
+        } else {
+          this.setVisibleStores(stores);
+        }
+      },
+      fail: () => this.setVisibleStores(stores)
+    });
+  },
+
+  setVisibleStores(stores, scale = this.data.mapScale) {
+    const markerStores = stores.filter(store => store.hasCoords);
+    this.markerClusters = {};
     this.setData({
-      filteredStores: filtered,
-      markers: filtered.filter(store => store.hasCoords).map(store => markerFromStore(store, store.id === this.data.activeStoreId))
+      filteredStores: stores,
+      markers: buildMarkers(markerStores, this.data.activeStoreId, scale, this.markerClusters)
+    });
+  },
+
+  focusStoreOnMap(store) {
+    if (!this.mapContext || !store || !store.hasCoords) return;
+    this.mapContext.includePoints({
+      points: [{ latitude: store.lat, longitude: store.lng }],
+      padding: [220, 80, 260, 80]
     });
   },
 
@@ -285,6 +379,92 @@ function matchSearch(store, query) {
     ...store.recommend_dishes
   ].filter(Boolean).join(" ").toLowerCase();
   return haystack.includes(query);
+}
+
+function filterStoresInRegion(stores, region) {
+  if (!region || !region.southwest || !region.northeast) return stores;
+  const sw = region.southwest;
+  const ne = region.northeast;
+  return stores.filter(store => {
+    if (!store.hasCoords) return false;
+    const inLat = store.lat >= sw.latitude && store.lat <= ne.latitude;
+    const inLng = sw.longitude <= ne.longitude
+      ? store.lng >= sw.longitude && store.lng <= ne.longitude
+      : store.lng >= sw.longitude || store.lng <= ne.longitude;
+    return inLat && inLng;
+  });
+}
+
+function buildMarkers(stores, activeStoreId, scale, clusterMap) {
+  const zoom = Number(scale || 13);
+  if (zoom >= 16 || stores.length <= 1) {
+    return stores.map(store => markerFromStore(store, store.id === activeStoreId));
+  }
+
+  const cellSize = getClusterCellSize(zoom);
+  const grouped = stores.reduce((acc, store) => {
+    const key = `${Math.floor(store.lat / cellSize)}:${Math.floor(store.lng / cellSize)}`;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(store);
+    return acc;
+  }, {});
+
+  let clusterIndex = 0;
+  const markers = [];
+  Object.keys(grouped).forEach(key => {
+    const group = grouped[key];
+    if (group.length === 1) {
+      markers.push(markerFromStore(group[0], group[0].id === activeStoreId));
+      return;
+    }
+
+    const markerId = CLUSTER_ID_BASE + clusterIndex++;
+    clusterMap[markerId] = group;
+    markers.push(clusterMarkerFromStores(markerId, group));
+  });
+  return markers;
+}
+
+function getClusterCellSize(zoom) {
+  if (zoom <= 10) return 0.16;
+  if (zoom <= 12) return 0.08;
+  if (zoom <= 14) return 0.035;
+  return 0.016;
+}
+
+function clusterMarkerFromStores(markerId, stores) {
+  const total = stores.length;
+  const latitude = stores.reduce((sum, store) => sum + store.lat, 0) / total;
+  const longitude = stores.reduce((sum, store) => sum + store.lng, 0) / total;
+  const topStore = stores.slice().sort((a, b) => Number(b.rating || 0) - Number(a.rating || 0))[0];
+  const color = CATEGORY_COLORS[topStore.category] || "#ff6b35";
+
+  return {
+    id: markerId,
+    latitude,
+    longitude,
+    title: `${total} 家店`,
+    width: 40,
+    height: 40,
+    label: {
+      content: String(total),
+      color: "#ffffff",
+      fontSize: 13,
+      bgColor: color,
+      borderRadius: 18,
+      padding: 8,
+      textAlign: "center"
+    },
+    callout: {
+      content: `该区域 ${total} 家店`,
+      color: "#f5f5f7",
+      fontSize: 12,
+      borderRadius: 10,
+      bgColor: "#1a1d29",
+      padding: 8,
+      display: "BYCLICK"
+    }
+  };
 }
 
 function markerFromStore(store, active) {
