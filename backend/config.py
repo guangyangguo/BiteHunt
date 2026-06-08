@@ -50,6 +50,7 @@ _DEFAULTS = {
     'map_center_lat': '30.655',
     'map_center_lng': '104.075',
     'map_default_zoom': '13',
+    'bilibili_cookie': '',
 }
 
 # 环境变量名映射（小写 key -> 大写环境变量名）
@@ -66,6 +67,7 @@ _ENV_MAP = {
     'map_center_lat': 'MAP_CENTER_LAT',
     'map_center_lng': 'MAP_CENTER_LNG',
     'map_default_zoom': 'MAP_DEFAULT_ZOOM',
+    'bilibili_cookie': 'BILIBILI_COOKIE',
 }
 
 

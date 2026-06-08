@@ -25,6 +25,6 @@ Thumbs.db
 logs/
 
 # 忽略 data 目录下的所有文件
-/data/*
+data/*
 # 但保留一个占位文件，让 Git 保留目录
 !/data/.gitkeep

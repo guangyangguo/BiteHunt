@@ -5,8 +5,16 @@ B站视频采集服务
 
 import re
 import json
+import time
+import hashlib
 import requests
+from urllib.parse import urlencode
 from datetime import datetime
+
+try:
+    from config import get as get_config
+except ImportError:
+    get_config = None
 
 BILIBILI_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
@@ -16,16 +24,74 @@ BILIBILI_HEADERS = {
     'Accept-Language': 'zh-CN,zh;q=0.9',
 }
 
+WBI_MIXIN_KEY_ENC_TAB = [
+    46, 47, 18, 2, 53, 8, 23, 32,
+    15, 50, 10, 31, 58, 3, 45, 35,
+    27, 43, 5, 49, 33, 9, 42, 19,
+    29, 28, 14, 39, 12, 38, 41, 13,
+    37, 48, 7, 16, 24, 55, 40, 61,
+    26, 17, 0, 1, 60, 51, 30, 4,
+    22, 25, 54, 21, 56, 59, 6, 63,
+    57, 62, 11, 36, 20, 34, 44, 52,
+]
+
+
+class BilibiliRiskControlError(Exception):
+    """B站空间视频列表接口触发风控。"""
+
 
 def _make_session():
     """创建一个带基础 cookie 的 session"""
     session = requests.Session()
     session.headers.update(BILIBILI_HEADERS)
+    cookie = get_config('bilibili_cookie', '') if get_config else ''
+    if cookie:
+        session.headers.update({'Cookie': cookie})
     try:
         session.get('https://www.bilibili.com/', timeout=8)
     except Exception:
         pass
     return session
+
+
+def _get_wbi_keys(session):
+    """获取 WBI 签名所需 key。失败时返回空字符串。"""
+    try:
+        resp = session.get('https://api.bilibili.com/x/web-interface/nav', timeout=10)
+        data = resp.json()
+        wbi_img = data.get('data', {}).get('wbi_img', {})
+        img_url = wbi_img.get('img_url', '')
+        sub_url = wbi_img.get('sub_url', '')
+        img_key = img_url.rsplit('/', 1)[-1].split('.')[0]
+        sub_key = sub_url.rsplit('/', 1)[-1].split('.')[0]
+        return img_key, sub_key
+    except Exception as e:
+        print(f"[Bilibili] 获取WBI key失败: {e}")
+        return '', ''
+
+
+def _get_mixin_key(img_key, sub_key):
+    raw = img_key + sub_key
+    return ''.join(raw[i] for i in WBI_MIXIN_KEY_ENC_TAB if i < len(raw))[:32]
+
+
+def _sign_wbi_params(params, img_key, sub_key):
+    mixin_key = _get_mixin_key(img_key, sub_key)
+    if not mixin_key:
+        return params
+
+    signed = dict(params)
+    signed['wts'] = int(time.time())
+    clean = {}
+    for key, value in signed.items():
+        value = str(value)
+        for ch in "!'()*":
+            value = value.replace(ch, '')
+        clean[key] = value
+
+    query = urlencode(sorted(clean.items()))
+    clean['w_rid'] = hashlib.md5((query + mixin_key).encode('utf-8')).hexdigest()
+    return clean
 
 
 def get_user_info(mid: str):
@@ -148,6 +214,23 @@ def fetch_video_by_url(url_or_bvid: str):
     return get_video_detail(bvid)
 
 
+def resolve_user_input(user_input: str):
+    """
+    从 UID、B站空间主页链接或UP主名称解析用户信息。
+    名称会走搜索接口并取第一个结果，适合作为便捷入口；精确性要求高时建议使用UID/主页链接。
+    """
+    mid = extract_mid(user_input)
+    if mid:
+        return get_user_info(mid)
+
+    keyword = (user_input or '').strip()
+    if not keyword:
+        return None
+
+    results = search_user(keyword)
+    return results[0] if results else None
+
+
 def search_user(keyword: str):
     """搜索UP主"""
     try:
@@ -185,11 +268,117 @@ def search_user(keyword: str):
         return []
 
 
-def fetch_user_recent_videos(mid: str, count: int = 10):
+def extract_mid(user_input: str) -> str:
+    """从 UID 或 B站空间链接中提取 mid。"""
+    if not user_input:
+        return ''
+
+    text = str(user_input).strip()
+    if re.match(r'^\d{2,}$', text):
+        return text
+
+    patterns = [
+        r'space\.bilibili\.com/(\d+)',
+        r'bilibili\.com/space/(\d+)',
+        r'[?&]mid=(\d+)',
+        r'[?&]vmid=(\d+)',
+        r'/(\d+)(?:[/?#]|$)',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1)
+    return ''
+
+
+def fetch_user_recent_videos(mid: str, count: int = 10, start_date: str = '', end_date: str = ''):
     """
-    尝试获取UP主最近的视频（从空间页HTML提取）
-    作为 API 不可用时的降级方案
+    尝试获取UP主最近的视频。
+    优先使用 WBI 视频列表接口；失败时再从空间页 HTML 提取，降低对单一方式的依赖。
     """
+    start_dt = _parse_date(start_date)
+    end_dt = _parse_date(end_date)
+    videos = _fetch_user_recent_videos_by_wbi(mid, count=count, start_dt=start_dt, end_dt=end_dt)
+    if videos is None:
+        raise BilibiliRiskControlError('B站空间视频列表接口触发风控，请配置 BILIBILI_COOKIE 后低频重试，或使用批量BV/链接添加。')
+    if videos:
+        return videos
+
+    return _fetch_user_recent_videos_from_html(mid, count=count, start_dt=start_dt, end_dt=end_dt)
+
+
+def _fetch_user_recent_videos_by_wbi(mid: str, count: int = 10, start_dt=None, end_dt=None):
+    """通过 B站空间 WBI 接口获取最近视频。"""
+    try:
+        session = _make_session()
+        img_key, sub_key = _get_wbi_keys(session)
+        if not img_key or not sub_key:
+            return []
+
+        videos = []
+        page_size = 30 if start_dt or end_dt else min(max(int(count or 10), 1), 30)
+        page = 1
+        max_pages = 8 if (start_dt or end_dt) else 3
+        while len(videos) < count and page <= max_pages:
+            params = _sign_wbi_params({
+                'mid': str(mid),
+                'pn': page,
+                'ps': page_size,
+                'tid': 0,
+                'order': 'pubdate',
+                'platform': 'web',
+                'web_location': 1550101,
+                'order_avoided': 'true',
+            }, img_key, sub_key)
+            resp = session.get(
+                'https://api.bilibili.com/x/space/wbi/arc/search',
+                params=params,
+                headers={'Referer': f'https://space.bilibili.com/{mid}/video'},
+                timeout=15,
+            )
+            data = resp.json()
+            if data.get('code') != 0:
+                print(f"[Bilibili] WBI视频列表失败 mid={mid}: code={data.get('code')} msg={data.get('message')}")
+                if data.get('code') in (-412, -352):
+                    return None
+                return []
+
+            vlist = data.get('data', {}).get('list', {}).get('vlist', [])
+            if not vlist:
+                break
+
+            for v in vlist:
+                bvid = v.get('bvid', '')
+                if not bvid:
+                    continue
+                created_dt = _datetime_from_timestamp(v.get('created', 0))
+                if end_dt and created_dt and created_dt.date() > end_dt.date():
+                    continue
+                if start_dt and created_dt and created_dt.date() < start_dt.date():
+                    return videos[:count]
+                videos.append({
+                    'platform_video_id': bvid,
+                    'title': v.get('title', ''),
+                    'description': v.get('description', ''),
+                    'cover_url': v.get('pic', ''),
+                    'tags': _parse_tags(v.get('tag', '')),
+                    'publish_date': _format_timestamp(v.get('created', 0)),
+                    'url': f'https://www.bilibili.com/video/{bvid}',
+                    'duration': _format_duration(v.get('length', '')),
+                    'play_count': _format_count(v.get('play', 0)),
+                })
+                if len(videos) >= count:
+                    break
+            page += 1
+
+        return videos[:count]
+    except Exception as e:
+        print(f"[Bilibili] WBI视频列表异常 mid={mid}: {e}")
+        return []
+
+
+def _fetch_user_recent_videos_from_html(mid: str, count: int = 10, start_dt=None, end_dt=None):
+    """从空间页 HTML 提取最近视频，作为 API 失败后的兜底。"""
     try:
         session = _make_session()
         resp = session.get(
@@ -216,6 +405,11 @@ def fetch_user_recent_videos(mid: str, count: int = 10):
                 )
                 for v in vlist[:count]:
                     bvid = v.get('bvid', '')
+                    created_dt = _datetime_from_timestamp(v.get('created', 0))
+                    if end_dt and created_dt and created_dt.date() > end_dt.date():
+                        continue
+                    if start_dt and created_dt and created_dt.date() < start_dt.date():
+                        break
                     videos.append({
                         'platform_video_id': bvid,
                         'title': v.get('title', ''),
@@ -405,10 +599,30 @@ def _format_timestamp(ts):
         return ''
 
 
+def _datetime_from_timestamp(ts):
+    if not ts:
+        return None
+    try:
+        return datetime.fromtimestamp(int(ts))
+    except (ValueError, OSError, TypeError):
+        return None
+
+
+def _parse_date(value):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(str(value).strip(), '%Y-%m-%d')
+    except ValueError:
+        return None
+
+
 def _format_duration(seconds):
     """格式化秒数"""
     if not seconds:
         return ''
+    if isinstance(seconds, str) and ':' in seconds:
+        return seconds
     try:
         s = int(seconds)
         return f'{s // 60}:{s % 60:02d}'

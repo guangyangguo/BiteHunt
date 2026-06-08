@@ -216,6 +216,31 @@
       </div>
 
       <div class="info-card">
+        <h3>通过UP主主页导入视频</h3>
+        <p>粘贴B站空间主页链接、UID或精确UP主名称，系统会低频拉取最近视频并自动跳过已存在的视频。建议每次拉取 10-20 个，避免触发平台风控。</p>
+        <div style="display:flex;gap:12px;margin-top:16px;align-items:center;flex-wrap:wrap;">
+          <input type="text" id="importBloggerInput" placeholder="例如 https://space.bilibili.com/123456 或 UID"
+                 style="flex:1;min-width:320px;padding:10px 14px;border-radius:var(--radius-sm);background:var(--bg-tertiary);
+                 color:var(--text-primary);font-size:14px;border:1px solid var(--border);"
+                 onkeyup="if(event.key==='Enter')importBloggerVideos()">
+          <select id="importVideoCount" style="padding:10px 14px;border-radius:var(--radius-sm);background:var(--bg-tertiary);
+            color:var(--text-primary);font-size:14px;border:1px solid var(--border);">
+            <option value="10">最近 10 个</option>
+            <option value="20" selected>最近 20 个</option>
+            <option value="30">最近 30 个</option>
+          </select>
+          <input type="date" id="importStartDate" title="开始日期"
+                 style="padding:10px 14px;border-radius:var(--radius-sm);background:var(--bg-tertiary);
+                 color:var(--text-primary);font-size:14px;border:1px solid var(--border);">
+          <input type="date" id="importEndDate" title="结束日期"
+                 style="padding:10px 14px;border-radius:var(--radius-sm);background:var(--bg-tertiary);
+                 color:var(--text-primary);font-size:14px;border:1px solid var(--border);">
+          <button class="btn btn-primary" onclick="importBloggerVideos()">📥 导入视频</button>
+        </div>
+        <div id="importBloggerResult" style="margin-top:8px;font-size:13px;color:var(--text-muted);"></div>
+      </div>
+
+      <div class="info-card">
         <h3>📹 手动添加视频</h3>
         <p>当自动拉取失败时，可以手动粘贴B站视频链接或BV号来添加单个视频。</p>
         <div style="display:flex;gap:12px;margin-top:16px;align-items:center;flex-wrap:wrap;">
@@ -227,6 +252,15 @@
                  style="flex:1;min-width:280px;padding:10px 14px;border-radius:var(--radius-sm);background:var(--bg-tertiary);
                  color:var(--text-primary);font-size:14px;border:1px solid var(--border);">
           <button class="btn btn-primary" onclick="addVideoByBV()">➕ 添加视频</button>
+        </div>
+        <div style="margin-top:14px;">
+          <textarea id="bvBatchInput" placeholder="批量粘贴BV号或B站视频链接，支持换行、空格、逗号分隔..."
+                    style="width:100%;min-height:92px;padding:10px 14px;border-radius:var(--radius-sm);background:var(--bg-tertiary);
+                    color:var(--text-primary);font-size:14px;border:1px solid var(--border);resize:vertical;"></textarea>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:12px;">
+            <span style="font-size:12px;color:var(--text-muted);">适合空间页批量拉取被风控时使用；单次最多处理 50 条。</span>
+            <button class="btn btn-secondary" onclick="addVideosByBVBatch()">📦 批量添加</button>
+          </div>
         </div>
         <div id="bvResult" style="margin-top:8px;font-size:13px;"></div>
       </div>
@@ -389,6 +423,32 @@
       } catch (e) { toast('拉取失败: ' + e.message, 'error'); }
     }
 
+    async function importBloggerVideos() {
+      const input = document.getElementById('importBloggerInput').value.trim();
+      const count = Number(document.getElementById('importVideoCount').value || 20);
+      const startDate = document.getElementById('importStartDate').value;
+      const endDate = document.getElementById('importEndDate').value;
+      const resultDiv = document.getElementById('importBloggerResult');
+      if (!input) return toast('请输入UP主主页链接、UID或名称', 'error');
+      if (startDate && endDate && startDate > endDate) {
+        return toast('开始日期不能晚于结束日期', 'error');
+      }
+
+      resultDiv.innerHTML = '<span class="loading-inline"></span> 正在导入，日期范围会按发布时间过滤，建议不要连续高频操作...';
+      try {
+        const result = await API.importBloggerVideos(input, count, startDate, endDate);
+        const d = result.data || {};
+        resultDiv.innerHTML = `<span style="color:#22c55e;">✅ ${result.message}</span>`;
+        toast(result.message || `已导入 ${d.new_videos || 0} 个新视频`, 'success');
+        document.getElementById('importBloggerInput').value = '';
+        await loadBloggers();
+        await loadVideos();
+      } catch (e) {
+        resultDiv.innerHTML = `<span style="color:#ef4444;">❌ ${e.message}</span>`;
+        toast('导入失败: ' + e.message, 'error');
+      }
+    }
+
     async function deleteBlogger(id) {
       if (!confirm("确定删除该店铺？此操作不可撤销。")) return;
       try { await API.deleteBlogger(id); toast('已删除'); loadBloggers(); }
@@ -413,6 +473,31 @@
       } catch (e) {
         resultDiv.innerHTML = `<span style="color:#ef4444;">❌ ${e.message}</span>`;
         toast('添加失败: ' + e.message, 'error');
+      }
+    }
+
+    async function addVideosByBVBatch() {
+      const text = document.getElementById('bvBatchInput').value.trim();
+      const bloggerId = document.getElementById('bvBloggerSelect').value;
+      const resultDiv = document.getElementById('bvResult');
+
+      if (!text) return toast('请粘贴BV号或视频链接', 'error');
+      if (!bloggerId) return toast('请选择所属博主', 'error');
+
+      resultDiv.innerHTML = '<span class="loading-inline"></span> 正在批量获取视频信息...';
+      try {
+        const result = await API.addVideosByBVBatch(text, bloggerId);
+        const data = result.data || {};
+        const failedText = data.failed && data.failed.length
+          ? `，失败 ${data.failed.length} 个`
+          : '';
+        resultDiv.innerHTML = `<span style="color:#22c55e;">✅ ${result.message}${failedText}</span>`;
+        document.getElementById('bvBatchInput').value = '';
+        toast(result.message, 'success');
+        loadVideos();
+      } catch (e) {
+        resultDiv.innerHTML = `<span style="color:#ef4444;">❌ ${e.message}</span>`;
+        toast('批量添加失败: ' + e.message, 'error');
       }
     }
 

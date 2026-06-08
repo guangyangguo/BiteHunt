@@ -159,7 +159,7 @@ def add_videos_batch(blogger_id, video_list):
     added = 0
     for v in video_list:
         try:
-            conn.execute(
+            cursor = conn.execute(
                 """INSERT OR IGNORE INTO videos
                    (blogger_id, platform_video_id, title, description, cover_url, tags,
                     publish_date, url, duration, play_count)
@@ -177,7 +177,7 @@ def add_videos_batch(blogger_id, video_list):
                     v.get('play_count', ''),
                 )
             )
-            if conn.total_changes > 0:
+            if cursor.rowcount > 0:
                 added += 1
         except Exception:
             continue

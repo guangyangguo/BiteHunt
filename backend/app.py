@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import io
+import re
 
 # 修复 Windows 控制台编码问题
 if sys.platform == 'win32':
@@ -38,7 +39,7 @@ from database import (
 )
 from services.bilibili import (
     get_user_info, search_user, get_video_detail, fetch_video_by_url,
-    fetch_user_recent_videos
+    fetch_user_recent_videos, resolve_user_input, BilibiliRiskControlError
 )
 from services.analyzer import analyze_video, batch_analyze
 
@@ -231,6 +232,31 @@ def api_search_bloggers():
         return jsonify({'code': -1, 'error': str(e)}), 500
 
 
+def _get_blogger_by_uid(platform_uid):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM bloggers WHERE platform_uid=? AND status='active'",
+        (str(platform_uid),)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def _fetch_and_save_recent_videos(blogger_id, platform_uid, count=20, start_date='', end_date=''):
+    count = max(1, min(int(count or 20), 50))
+    try:
+        videos = fetch_user_recent_videos(
+            str(platform_uid),
+            count=count,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    except BilibiliRiskControlError as e:
+        return [], 0, str(e)
+    added = add_videos_batch(blogger_id, videos) if videos else 0
+    return videos, added, ''
+
+
 @app.route('/api/bloggers', methods=['POST'])
 def api_add_blogger():
     try:
@@ -262,10 +288,89 @@ def api_add_blogger():
         if blogger_id is None:
             return jsonify({'code': -1, 'error': '该博主已存在'}), 409
 
-        # 自动获取最新视频
-        fetch_and_save_videos(blogger_id, platform_uid, page=1, page_size=20, db_add_func=add_videos_batch)
+        # 自动低频获取最近视频；失败不影响博主建档
+        _fetch_and_save_recent_videos(blogger_id, platform_uid, count=20)
 
         return jsonify({'code': 0, 'data': {'id': blogger_id, 'name': data.get('name')}})
+    except Exception as e:
+        return jsonify({'code': -1, 'error': str(e)}), 500
+
+
+@app.route('/api/bloggers/import-videos', methods=['POST'])
+def api_import_blogger_videos():
+    """通过UP主主页链接、UID或名称创建/复用博主，并拉取最近视频。"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'code': -1, 'error': '请求数据为空'}), 400
+
+        user_input = str(data.get('input', '')).strip()
+        count = max(1, min(int(data.get('count', 20) or 20), 50))
+        start_date = str(data.get('start_date', '')).strip()
+        end_date = str(data.get('end_date', '')).strip()
+        if not user_input:
+            return jsonify({'code': -1, 'error': '请输入UP主主页链接、UID或名称'}), 400
+
+        info = resolve_user_input(user_input)
+        if not info or not info.get('platform_uid'):
+            return jsonify({'code': -1, 'error': '无法识别该UP主，请优先使用B站空间主页链接或UID'}), 400
+
+        platform_uid = str(info['platform_uid'])
+        existing = _get_blogger_by_uid(platform_uid)
+        created = False
+        if existing:
+            blogger_id = existing['id']
+            blogger_name = existing.get('name') or info.get('name') or platform_uid
+        else:
+            blogger_id = add_blogger(
+                name=info.get('name') or platform_uid,
+                platform_uid=platform_uid,
+                platform='bilibili',
+                avatar=info.get('avatar', ''),
+                followers=info.get('followers', ''),
+                bio=info.get('bio', ''),
+            )
+            if blogger_id is None:
+                existing = _get_blogger_by_uid(platform_uid)
+                if not existing:
+                    return jsonify({'code': -1, 'error': '博主创建失败'}), 500
+                blogger_id = existing['id']
+                blogger_name = existing.get('name') or info.get('name') or platform_uid
+            else:
+                created = True
+                blogger_name = info.get('name') or platform_uid
+
+        videos, added, fetch_error = _fetch_and_save_recent_videos(
+            blogger_id,
+            platform_uid,
+            count=count,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if not videos:
+            return jsonify({
+                'code': -1,
+                'error': fetch_error or '未能获取到视频，可能触发B站风控。建议稍后重试，或使用手动BV批量/单条添加。',
+                'data': {
+                    'blogger_id': blogger_id,
+                    'blogger_name': blogger_name,
+                    'created': created,
+                    'total_fetched': 0,
+                    'new_videos': 0,
+                }
+            }), 200
+
+        return jsonify({
+            'code': 0,
+            'data': {
+                'blogger_id': blogger_id,
+                'blogger_name': blogger_name,
+                'created': created,
+                'total_fetched': len(videos),
+                'new_videos': added,
+            },
+            'message': f'{blogger_name}: 获取到 {len(videos)} 个视频，新增 {added} 个',
+        })
     except Exception as e:
         return jsonify({'code': -1, 'error': str(e)}), 500
 
@@ -287,16 +392,16 @@ def api_fetch_videos(blogger_id):
         if not blogger:
             return jsonify({'code': -1, 'error': '博主不存在'}), 404
 
+        count = request.args.get('count', default=20, type=int)
+
         # 从空间页抓取视频
-        videos = fetch_user_recent_videos(blogger['platform_uid'], count=20)
+        videos, added, fetch_error = _fetch_and_save_recent_videos(blogger['id'], blogger['platform_uid'], count=count)
         if not videos:
             return jsonify({
                 'code': -1,
-                'error': '未能获取到视频（B站风控限制），请尝试手动添加BV号',
+                'error': fetch_error or '未能获取到视频（B站风控限制），请尝试手动添加BV号',
                 'data': {'total_fetched': 0, 'new_videos': 0}
             }), 200
-
-        added = add_videos_batch(blogger_id, videos)
 
         return jsonify({
             'code': 0,
@@ -358,6 +463,75 @@ def api_add_video():
                 'message': '该视频已存在，无需重复添加',
             })
 
+    except Exception as e:
+        return jsonify({'code': -1, 'error': str(e)}), 500
+
+
+@app.route('/api/videos/add-batch', methods=['POST'])
+def api_add_videos_batch_by_input():
+    """批量通过BV号或视频链接添加视频。"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'code': -1, 'error': '请求数据为空'}), 400
+
+        text = str(data.get('text', '')).strip()
+        blogger_id = data.get('blogger_id')
+        if not text:
+            return jsonify({'code': -1, 'error': '请粘贴BV号或B站视频链接'}), 400
+        if not blogger_id:
+            return jsonify({'code': -1, 'error': '请选择所属博主'}), 400
+
+        candidates = []
+        for item in re.split(r'[\s,，;；]+', text):
+            item = item.strip()
+            if item:
+                candidates.append(item)
+
+        seen = set()
+        saved = []
+        failed = []
+        duplicates = 0
+        for item in candidates[:50]:
+            detail = fetch_video_by_url(item)
+            if not detail:
+                failed.append({'input': item, 'error': '无法获取视频信息'})
+                continue
+            bvid = detail['bvid']
+            if bvid in seen:
+                duplicates += 1
+                continue
+            seen.add(bvid)
+
+            video_data = [{
+                'platform_video_id': bvid,
+                'title': detail['title'],
+                'description': detail['description'],
+                'cover_url': detail['cover_url'],
+                'tags': detail['tags'],
+                'publish_date': detail['publish_date'],
+                'url': detail['url'],
+                'duration': detail['duration'],
+                'play_count': detail['play_count'],
+            }]
+            added = add_videos_batch(blogger_id, video_data)
+            if added:
+                saved.append({'bvid': bvid, 'title': detail['title']})
+            else:
+                duplicates += 1
+
+        return jsonify({
+            'code': 0,
+            'data': {
+                'total_input': len(candidates),
+                'processed': min(len(candidates), 50),
+                'new_videos': len(saved),
+                'duplicates': duplicates,
+                'failed': failed,
+                'saved': saved,
+            },
+            'message': f'批量处理 {min(len(candidates), 50)} 条，新增 {len(saved)} 个，重复 {duplicates} 个，失败 {len(failed)} 个',
+        })
     except Exception as e:
         return jsonify({'code': -1, 'error': str(e)}), 500
 

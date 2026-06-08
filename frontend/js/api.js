@@ -111,6 +111,22 @@ const API = {
     return data;
   },
 
+  async importBloggerVideos(input, count = 20, startDate = '', endDate = '') {
+    const resp = await apiFetch(`${API_BASE}/bloggers/import-videos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input,
+        count,
+        start_date: startDate,
+        end_date: endDate,
+      }),
+    }, 45000);
+    const data = await resp.json();
+    if (data.code !== 0) throw new Error(data.error);
+    return data;
+  },
+
   // ==================== 视频 ====================
 
   async addVideoByBV(bv, bloggerId) {
@@ -119,6 +135,17 @@ const API = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ bv, blogger_id: bloggerId }),
     });
+    const data = await resp.json();
+    if (data.code !== 0) throw new Error(data.error);
+    return data;
+  },
+
+  async addVideosByBVBatch(text, bloggerId) {
+    const resp = await apiFetch(`${API_BASE}/videos/add-batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, blogger_id: bloggerId }),
+    }, 90000);
     const data = await resp.json();
     if (data.code !== 0) throw new Error(data.error);
     return data;
