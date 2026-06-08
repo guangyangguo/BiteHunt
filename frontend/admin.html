@@ -6,7 +6,16 @@
   <title>管理后台 - 探店地图</title>
   <link rel="stylesheet" href="css/style.css">
   <style>
-    .admin-page { padding: 24px; max-width: 1200px; margin: 0 auto; min-height: 100vh; }
+    html, body { width: 100%; height: 100%; overflow: hidden; }
+    body { overscroll-behavior-y: contain; }
+    .admin-page {
+      height: 100vh;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 24px max(24px, calc((100vw - 1200px) / 2)) 80px;
+      margin: 0;
+      -webkit-overflow-scrolling: touch;
+    }
     .admin-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
     .admin-header h1 { font-size: 24px; color: var(--text-primary); }
     .back-link { color: var(--text-secondary); text-decoration: none; font-size: 14px; padding: 8px 16px;
