@@ -179,6 +179,68 @@
       );
     }
 
+    // ===== 当前位置按钮 =====
+    const LocateControl = L.Control.extend({
+      options: { position: 'bottomright' },
+      onAdd: function () {
+        const btn = L.DomUtil.create('button', 'leaflet-locate-btn');
+        btn.title = '定位到当前位置';
+        btn.innerHTML = '⊕';
+        btn.setAttribute('aria-label', '定位到当前位置');
+
+        L.DomEvent.on(btn, 'click', function (e) {
+          L.DomEvent.stopPropagation(e);
+          L.DomEvent.preventDefault(e);
+          btn.classList.add('locating');
+          btn.innerHTML = '⟳';
+
+          if (!navigator.geolocation) {
+            btn.classList.remove('locating');
+            btn.innerHTML = '⊕';
+            showToast('⚠️ 浏览器不支持定位功能');
+            return;
+          }
+
+          navigator.geolocation.getCurrentPosition(
+            function (pos) {
+              btn.classList.remove('locating');
+              btn.innerHTML = '⊕';
+              const latLng = [pos.coords.latitude, pos.coords.longitude];
+              map.setView(latLng, Math.max(map.getZoom(), 15), { animate: true });
+              // 更新或创建位置标记
+              if (!map._userMarker) {
+                map._userMarker = L.circleMarker(latLng, {
+                  radius: 8,
+                  fillColor: '#3b82f6',
+                  color: '#fff',
+                  weight: 2,
+                  fillOpacity: 0.9,
+                }).addTo(map).bindTooltip('我的位置', { direction: 'top', offset: [0, -8] });
+              } else {
+                map._userMarker.setLatLng(latLng);
+              }
+              map._userMarker.openTooltip();
+              showToast('📍 已定位到当前位置');
+            },
+            function (err) {
+              btn.classList.remove('locating');
+              btn.innerHTML = '⊕';
+              const msgs = {
+                1: '请允许浏览器获取位置信息',
+                2: '无法获取位置信息',
+                3: '获取位置超时',
+              };
+              showToast('⚠️ ' + (msgs[err.code] || '定位失败'));
+            },
+            { enableHighAccuracy: true, timeout: 8000, maximumAge: 300000 }
+          );
+        });
+
+        return btn;
+      },
+    });
+    map.addControl(new LocateControl());
+
     // 地图移动/缩放时更新聚类
     map.on('moveend', debounce(updateVisibleMarkers, 150));
     map.on('zoomend', debounce(updateVisibleMarkers, 150));

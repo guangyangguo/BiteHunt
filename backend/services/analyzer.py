@@ -104,7 +104,7 @@ def call_llm(messages, model=None, temperature=0.3):
         'model': model_name,
         'messages': messages,
         'temperature': temperature,
-        'max_tokens': 4096,
+        'max_tokens': 8192,
     }
 
     try:
@@ -139,39 +139,102 @@ def call_llm(messages, model=None, temperature=0.3):
         return {'error': f'LLM调用异常: {str(e)}'}
 
 
+def _fix_truncated_json(json_str):
+    """
+    尝试修复被截断的 JSON：
+    1. 补全缺失的闭合括号
+    2. 移除尾部不完整的字段
+    """
+    # 如果 JSON 被截断（最后一行为不完整的键值对），截断到最后一个完整的值
+    # 找到最后一个完整的行
+    lines = json_str.split('\n')
+    # 去掉尾部空行
+    while lines and not lines[-1].strip():
+        lines.pop()
+    # 如果最后一行不是以 ,  ]  } 结尾且不像是完整值，删除它
+    if lines:
+        last = lines[-1].rstrip()
+        # 检查最后一行是否不完整（如 "recommend_di 这种）
+        if not (last.endswith(',') or last.endswith(']') or last.endswith('}')
+                or last.endswith('"') or last.endswith('0') or last.endswith('}')
+                or last.endswith('true') or last.endswith('false') or last.endswith('null')):
+            # 尝试去掉最后一行，看 JSON 是否完整
+            candidate = '\n'.join(lines[:-1])
+            if candidate.strip():
+                json_str = candidate
+
+    # 补全缺失的闭合符号
+    s = json_str.strip()
+    # 统计未闭合的括号
+    open_braces = s.count('{') - s.count('}')
+    open_brackets = s.count('[') - s.count(']')
+    # 检查字符串内未闭合的引号（简化处理：如果奇数个引号，去掉最后不完整的一段）
+    in_string = False
+    clean = []
+    for ch in s:
+        if ch == '"' and (not clean or clean[-1] != '\\'):
+            in_string = not in_string
+        clean.append(ch)
+    if in_string:
+        # 去掉最后一个不完整的字符串
+        s = ''.join(clean).rsplit('"', 1)[0]
+
+    # 补全缺失的闭合括号
+    s = s.rstrip(',\n\r\t ')  # 先去尾部逗号
+    s += ']' * open_brackets
+    s += '}' * open_braces
+
+    return s
+
+
 def parse_llm_response(content):
     """从LLM响应中解析JSON"""
     if not content:
         _log("parse_llm_response: 内容为空")
         return None
 
-    # 尝试直接解析
-    try:
-        result = json.loads(content)
-        _log(f"parse_llm_response: 直接解析成功, stores={len(result.get('stores', []))}")
-        return result
-    except json.JSONDecodeError as e:
-        _log(f"parse_llm_response: 直接解析失败 - {e}")
-
-    # 尝试提取 ```json ... ``` 代码块
+    # 先去掉 markdown 代码块标记，提取纯 JSON
+    json_candidates = []
+    # 候选1: 原始内容
+    json_candidates.append(content.strip())
+    # 候选2: 提取 ```json ... ``` 代码块
     json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
     if json_match:
-        try:
-            result = json.loads(json_match.group(1))
-            _log(f"parse_llm_response: 代码块解析成功, stores={len(result.get('stores', []))}")
-            return result
-        except json.JSONDecodeError as e:
-            _log(f"parse_llm_response: 代码块解析失败 - {e}")
-
-    # 尝试找到 { 到 } 的范围
+        json_candidates.append(json_match.group(1).strip())
+    # 候选3: 提取 { 到 } 的范围
     try:
         start = content.index('{')
         end = content.rindex('}') + 1
-        result = json.loads(content[start:end])
-        _log(f"parse_llm_response: 范围提取解析成功, stores={len(result.get('stores', []))}")
-        return result
-    except (ValueError, json.JSONDecodeError) as e:
-        _log(f"parse_llm_response: 范围提取失败 - {e}")
+        json_candidates.append(content[start:end])
+    except ValueError:
+        pass
+
+    for i, candidate in enumerate(json_candidates):
+        # 尝试直接解析
+        try:
+            result = json.loads(candidate)
+            _log(f"parse_llm_response: 候选{i}直接解析成功, stores={len(result.get('stores', []))}")
+            return result
+        except json.JSONDecodeError:
+            pass
+
+        # 尝试修复常见 JSON 问题后解析
+        try:
+            fixed = _fix_truncated_json(candidate)
+            result = json.loads(fixed)
+            _log(f"parse_llm_response: 候选{i}修复后解析成功, stores={len(result.get('stores', []))}")
+            return result
+        except json.JSONDecodeError:
+            continue
+
+        # 尝试移除尾部逗号后解析
+        try:
+            cleaned = re.sub(r',\s*([}\]])', r'\1', candidate)
+            result = json.loads(cleaned)
+            _log(f"parse_llm_response: 候选{i}去尾部逗号后解析成功, stores={len(result.get('stores', []))}")
+            return result
+        except json.JSONDecodeError:
+            continue
 
     _log(f"parse_llm_response: 全部解析方式失败, 原始内容前200字符: {content[:200]}")
     return None

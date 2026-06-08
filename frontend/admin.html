@@ -477,6 +477,10 @@
         const msg = `分析完成，识别到 ${result.stores_found} 家店铺`;
         toast(msg, 'success');
         loadVideos();
+        // 如果当前在店铺管理标签页，也刷新店铺列表
+        if (document.getElementById('panel-stores').classList.contains('active')) {
+          loadStoreManage();
+        }
         // 通知地图刷新
         if (window.opener && window.opener.APP) window.opener.APP.refreshData();
       } catch (e) {

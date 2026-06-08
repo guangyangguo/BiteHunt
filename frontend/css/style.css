@@ -889,6 +889,35 @@ ul, ol { list-style: none; }
   to { transform: rotate(360deg); }
 }
 
+/* --- 当前位置定位按钮 --- */
+.leaflet-locate-btn {
+  width: 36px;
+  height: 36px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+.leaflet-locate-btn:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.leaflet-locate-btn.locating {
+  animation: spin 1s linear infinite;
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
 /* ============================================
    Mobile App Shell for public map page
    ============================================ */
