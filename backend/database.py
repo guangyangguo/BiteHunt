@@ -274,9 +274,16 @@ def add_store(store_data):
 
 def get_all_stores(category=None):
     conn = get_db()
-    query = """SELECT s.*, b.name as blogger_name, b.avatar as blogger_avatar
+    query = """SELECT s.*,
+                      b.name as blogger_name,
+                      b.avatar as blogger_avatar,
+                      v.title as source_video_title,
+                      v.url as source_video_url,
+                      v.platform_video_id as source_video_bvid,
+                      v.cover_url as source_video_cover
                FROM stores s
                LEFT JOIN bloggers b ON s.source_blogger_id=b.id
+               LEFT JOIN videos v ON s.source_video_id=v.id
                WHERE s.status='active'"""
     params = []
     if category and category != 'all':
@@ -291,8 +298,16 @@ def get_all_stores(category=None):
 def get_store(store_id):
     conn = get_db()
     row = conn.execute(
-        """SELECT s.*, b.name as blogger_name, b.avatar as blogger_avatar
-           FROM stores s LEFT JOIN bloggers b ON s.source_blogger_id=b.id
+        """SELECT s.*,
+                  b.name as blogger_name,
+                  b.avatar as blogger_avatar,
+                  v.title as source_video_title,
+                  v.url as source_video_url,
+                  v.platform_video_id as source_video_bvid,
+                  v.cover_url as source_video_cover
+           FROM stores s
+           LEFT JOIN bloggers b ON s.source_blogger_id=b.id
+           LEFT JOIN videos v ON s.source_video_id=v.id
            WHERE s.id=?""",
         (store_id,)
     ).fetchone()

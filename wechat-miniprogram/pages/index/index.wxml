@@ -11,6 +11,8 @@
     bindtap="onMapTap"
   />
 
+  <cover-view class="map-locate-btn {{locating ? 'loading' : ''}}" bindtap="locateUser">◎</cover-view>
+
   <view class="top-card">
     <view class="brand">⌖</view>
     <view class="search-wrap">
@@ -69,7 +71,7 @@
         >
           <view class="card-main">
             <view class="store-name">{{item.name}}</view>
-            <view class="store-rating">{{item.ratingText}}</view>
+            <view class="store-rating {{item.ratingClass}}">{{item.ratingShortLabel}}</view>
           </view>
           <view class="store-meta">
             <text>{{item.category || '未分类'}}</text>
@@ -98,7 +100,7 @@
         <view class="detail-grid">
           <view class="info-box">
             <text class="label">评分</text>
-            <text class="value">{{selectedStore.ratingText}}</text>
+            <text class="value rating-badge {{selectedStore.ratingClass}}">{{selectedStore.ratingLabel}}</text>
           </view>
           <view class="info-box">
             <text class="label">人均</text>
@@ -134,6 +136,10 @@
               <view class="source-name">{{selectedStore.blogger_name || '未知博主'}}</view>
               <view class="source-meta">来自视频分析记录</view>
             </view>
+          </view>
+          <view wx:if="{{selectedStore.sourceVideoUrl}}" class="source-video">
+            <view class="source-video-title">{{selectedStore.sourceVideoTitle}}</view>
+            <button class="source-video-btn" bindtap="copySourceVideo">复制 B 站视频链接</button>
           </view>
           <view wx:if="{{selectedStore.note}}" class="note">{{selectedStore.note}}</view>
         </view>

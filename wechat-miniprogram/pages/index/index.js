@@ -135,7 +135,20 @@ Page({
     this.showToast("已定位到店铺");
   },
 
+  copySourceVideo() {
+    const store = this.data.selectedStore;
+    if (!store || !store.sourceVideoUrl) {
+      this.showToast("暂无来源视频链接");
+      return;
+    }
+    wx.setClipboardData({
+      data: store.sourceVideoUrl,
+      success: () => this.showToast("已复制 B 站视频链接")
+    });
+  },
+
   locateUser(options = {}) {
+    const silent = Boolean(options && options.silent);
     this.setData({ locating: true });
     wx.getLocation({
       type: "gcj02",
@@ -146,10 +159,16 @@ Page({
           locating: false
         });
       },
-      fail: () => {
+      fail: err => {
         this.setData({ locating: false });
-        if (!options.silent) {
-          this.showToast("无法获取当前位置，请检查微信定位权限");
+        if (!silent) {
+          const message = err && err.errMsg ? err.errMsg : "";
+          if (message.includes("auth deny") || message.includes("authorize")) {
+            this.showToast("请允许位置权限后再定位");
+            wx.openSetting({});
+          } else {
+            this.showToast("无法获取当前位置，请检查微信定位权限");
+          }
         }
       }
     });
@@ -205,8 +224,44 @@ function normalizeStore(raw) {
     lat,
     lng,
     hasCoords: Boolean(lat && lng),
-    ratingText: rating ? "★".repeat(Math.min(Math.round(rating), 5)) : "暂无评分"
+    ratingText: rating ? "★".repeat(Math.min(Math.round(rating), 5)) : "暂无评分",
+    ratingLabel: getRatingLabel(rating),
+    ratingShortLabel: getRatingShortLabel(rating),
+    ratingClass: rating ? `level-${Math.min(Math.max(Math.round(rating), 1), 5)}` : "empty",
+    sourceVideoUrl: getVideoUrl(raw),
+    sourceVideoTitle: raw.source_video_title || "B站探店视频"
   };
+}
+
+function getRatingLabel(rating) {
+  const value = Number(rating || 0);
+  if (!value) return "暂无评分";
+  const rounded = Math.min(Math.max(Math.round(value), 1), 5);
+  const label = getRatingWord(rounded);
+  return `${label} · ${value.toFixed(value % 1 ? 1 : 0)}/5`;
+}
+
+function getRatingShortLabel(rating) {
+  const value = Number(rating || 0);
+  if (!value) return "-";
+  return getRatingWord(Math.min(Math.max(Math.round(value), 1), 5));
+}
+
+function getRatingWord(rounded) {
+  const labels = {
+    5: "强烈推荐",
+    4: "推荐",
+    3: "中规中矩",
+    2: "谨慎",
+    1: "避雷"
+  };
+  return labels[rounded];
+}
+
+function getVideoUrl(store) {
+  if (store.source_video_url) return store.source_video_url;
+  const bvid = store.source_video_bvid || store.platform_video_id;
+  return bvid ? `https://www.bilibili.com/video/${bvid}` : "";
 }
 
 function parseArray(value) {

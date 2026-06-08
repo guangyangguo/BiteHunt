@@ -367,6 +367,45 @@
   }
 
   // ==================== 店铺详情面板 ====================
+  function getRatingView(rating) {
+    const value = Number(rating || 0);
+    if (!value) {
+      return { text: '暂无评分', shortText: '-', className: 'rating-empty' };
+    }
+
+    const rounded = Math.min(Math.max(Math.round(value), 1), 5);
+    const labels = {
+      5: '强烈推荐',
+      4: '推荐',
+      3: '中规中矩',
+      2: '谨慎',
+      1: '避雷',
+    };
+
+    return {
+      text: `${labels[rounded]} · ${value.toFixed(value % 1 ? 1 : 0)}/5`,
+      shortText: labels[rounded],
+      className: `rating-level-${rounded}`,
+    };
+  }
+
+  function getVideoUrl(store) {
+    if (store.source_video_url) return store.source_video_url;
+    const bvid = store.source_video_bvid || store.platform_video_id;
+    return bvid ? `https://www.bilibili.com/video/${bvid}` : '';
+  }
+
+  function openSourceVideo(storeId) {
+    const store = state.allStoresCache.find((s) => s.id === storeId);
+    if (!store) return;
+    const url = getVideoUrl(store);
+    if (!url) {
+      showToast('暂无来源视频链接');
+      return;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
   function openDetail(storeId) {
     const store = state.allStoresCache.find((s) => s.id === storeId);
     if (!store) return;
@@ -384,10 +423,9 @@
     const dishes = Array.isArray(store.recommend_dishes) ? store.recommend_dishes : [];
     const color = CATEGORY_COLORS[store.category] || '#ff6b35';
     const hasCoords = store.lat && store.lng && !(store.lat === 0 && store.lng === 0);
-
-    const ratingStars = store.rating
-      ? "⭐".repeat(Math.min(Math.round(store.rating), 5)) + (store.rating % 1 ? "☆" : "")
-      : "暂无评分";
+    const ratingView = getRatingView(store.rating);
+    const sourceVideoUrl = getVideoUrl(store);
+    const sourceVideoTitle = store.source_video_title || 'B站探店视频';
 
     dom.detailOverlay.innerHTML = `
       <div class="detail-header">
@@ -401,7 +439,7 @@
           <div class="detail-info-grid">
             <div class="detail-info-item">
               <div class="info-label">评分</div>
-              <div class="info-value rating-stars">${ratingStars}</div>
+              <div class="info-value rating-badge ${ratingView.className}">${ratingView.text}</div>
             </div>
             <div class="detail-info-item">
               <div class="info-label">💰 人均</div>
@@ -459,6 +497,12 @@
               <div class="blogger-meta">${visitDate || ''} 探访</div>
             </div>
           </div>
+          ${sourceVideoUrl ? `
+            <div class="detail-source-video">
+              <div class="source-video-title">${sourceVideoTitle}</div>
+              <button class="source-video-btn" onclick="APP.openSourceVideo(${store.id})">直达 B 站视频</button>
+            </div>
+          ` : ''}
           ${store.note ? `<div class="detail-analysis-summary">${store.note}</div>` : ''}
           ${store.confidence ? `<div class="detail-confidence">AI 置信度: ${Math.round(store.confidence * 100)}%</div>` : ''}
         </div>
@@ -504,9 +548,7 @@
           const dishes = Array.isArray(store.recommend_dishes) ? store.recommend_dishes : [];
           const bloggerName = store.blogger_name || store.bloggerName || '未知';
           const dateStr = store.visitDate || (store.created_at || '').split('T')[0];
-          const ratingStars = store.rating
-            ? "⭐".repeat(Math.min(Math.round(store.rating), 5))
-            : "—";
+          const ratingView = getRatingView(store.rating);
 
           return `
       <div class="store-card${state.activeStoreId === store.id ? ' active' : ''}"
@@ -514,7 +556,7 @@
            onclick="APP.selectStore(${store.id})">
         <div class="card-header">
           <div class="store-name">${store.name}</div>
-          <div class="store-rating">${ratingStars}</div>
+          <div class="store-rating rating-pill ${ratingView.className}">${ratingView.shortText}</div>
         </div>
         <div class="store-meta">
           <span>💰 ¥${store.avg_price || store.avgPrice || '-'}/人</span>
@@ -772,6 +814,7 @@
     closeDetail,
     showToast,
     locateStore,
+    openSourceVideo,
     refreshData: loadData,
   };
 
