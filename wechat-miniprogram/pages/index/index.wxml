@@ -28,6 +28,16 @@
     </view>
   </view>
 
+  <view class="filter-card {{sheetExpanded || detailOpen ? 'hidden' : ''}}">
+    <picker mode="selector" range="{{bloggerOptions}}" range-key="name" value="{{bloggerIndex}}" bindchange="onBloggerChange">
+      <view class="filter-chip {{currentBlogger !== 'all' ? 'active' : ''}}">
+        <text class="filter-label">博主</text>
+        <text class="filter-value">{{currentBloggerName}}</text>
+      </view>
+    </picker>
+    <button wx:if="{{searchActive}}" class="filter-clear" bindtap="clearSearchFilters">清空</button>
+  </view>
+
   <scroll-view class="category-bar {{sheetExpanded || detailOpen ? 'hidden' : ''}}" scroll-x enhanced show-scrollbar="{{false}}">
     <view class="category-inner">
       <button
@@ -48,8 +58,8 @@
     <view class="sheet-handle"></view>
     <view class="sheet-header" bindtap="toggleSheet">
       <view>
-        <view class="sheet-title">{{filteredStores.length ? '发现 ' + filteredStores.length + ' 家好店' : '没有找到店铺'}}</view>
-        <view class="sheet-subtitle">知名美食博主探访记录</view>
+        <view class="sheet-title">{{sheetTitle}}</view>
+        <view class="sheet-subtitle">{{sheetSubtitle}}</view>
       </view>
       <button class="sheet-toggle">{{sheetExpanded ? '⌄' : '⌃'}}</button>
     </view>
@@ -60,10 +70,10 @@
         <text>{{loadError}}</text>
         <button class="retry-btn" bindtap="loadData">重试</button>
       </view>
-      <view wx:if="{{!loading && !loadError && !filteredStores.length}}" class="empty-state">没有找到匹配的店铺</view>
-      <block wx:if="{{!loading && !loadError && filteredStores.length}}">
+      <view wx:if="{{!loading && !loadError && !displayStores.length}}" class="empty-state">{{emptyText}}</view>
+      <block wx:if="{{!loading && !loadError && displayStores.length}}">
         <view
-          wx:for="{{filteredStores}}"
+          wx:for="{{displayStores}}"
           wx:key="id"
           class="store-card {{activeStoreId === item.id ? 'active' : ''}}"
           data-id="{{item.id}}"

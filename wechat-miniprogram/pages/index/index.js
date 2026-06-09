@@ -1,5 +1,10 @@
 const api = require("../../utils/api");
 const config = require("../../utils/config");
+const {
+  buildBloggerOptions,
+  buildStoreListState,
+  filterStores
+} = require("./search-state");
 
 const BASE_CATEGORIES = [
   { key: "all", icon: "⌘", label: "全部" },
@@ -34,10 +39,20 @@ Page({
     loadError: "",
     stores: [],
     filteredStores: [],
+    displayStores: [],
+    viewportStores: [],
     markers: [],
     categories: BASE_CATEGORIES,
     currentCategory: "all",
     searchQuery: "",
+    currentBlogger: "all",
+    currentBloggerName: "全部博主",
+    bloggerIndex: 0,
+    bloggerOptions: [{ name: "全部博主", value: "all" }],
+    searchActive: false,
+    sheetTitle: "发现好店",
+    sheetSubtitle: "当前地图区域内的探店记录",
+    emptyText: "当前区域没有店铺",
     activeStoreId: null,
     selectedStore: null,
     detailOpen: false,
@@ -66,10 +81,10 @@ Page({
       const normalized = stores.map(normalizeStore);
       this.setData({
         stores: normalized,
+        bloggerOptions: buildBloggerOptions(normalized),
         loading: false
       });
       this.applyFilters();
-      this.updateCategoryCounts(normalized);
     } catch (err) {
       const hint = getApiHint();
       this.setData({
@@ -81,6 +96,29 @@ Page({
 
   onSearchInput(event) {
     this.setData({ searchQuery: (event.detail.value || "").trim() });
+    this.applyFilters();
+  },
+
+  onBloggerChange(event) {
+    const index = Number(event.detail.value || 0);
+    const option = this.data.bloggerOptions[index] || this.data.bloggerOptions[0];
+    this.setData({
+      bloggerIndex: index,
+      currentBlogger: option.value,
+      currentBloggerName: option.name,
+      activeStoreId: null
+    });
+    this.applyFilters();
+  },
+
+  clearSearchFilters() {
+    this.setData({
+      searchQuery: "",
+      currentBlogger: "all",
+      currentBloggerName: "全部博主",
+      bloggerIndex: 0,
+      activeStoreId: null
+    });
     this.applyFilters();
   },
 
@@ -134,20 +172,13 @@ Page({
     const store = this.data.stores.find(item => item.id === id);
     if (!store) return;
 
-    const updates = {
+    this.setData({
       activeStoreId: id,
       selectedStore: store,
       detailOpen: true,
       sheetExpanded: false
-    };
-    if (store.hasCoords) {
-      this.currentMapScale = Math.max(this.data.mapScale, 15);
-      updates.mapCenter = { latitude: store.lat, longitude: store.lng };
-      updates.mapScale = this.currentMapScale;
-    }
-    this.setData(updates);
+    });
     this.applyFilters();
-    this.focusStoreOnMap(store);
   },
 
   openCluster(markerId) {
@@ -233,16 +264,11 @@ Page({
   },
 
   applyFilters() {
-    const query = this.data.searchQuery.toLowerCase();
-    let filtered = this.data.stores;
-
-    if (this.data.currentCategory !== "all") {
-      filtered = filtered.filter(store => store.category === this.data.currentCategory);
-    }
-    if (query) {
-      filtered = filtered.filter(store => matchSearch(store, query));
-    }
-
+    const filtered = filterStores(this.data.stores, {
+      query: this.data.searchQuery,
+      category: this.data.currentCategory,
+      blogger: this.data.currentBlogger
+    });
     this.baseFilteredStores = filtered;
     this.refreshViewportStores({ fallbackStores: filtered });
   },
@@ -285,10 +311,24 @@ Page({
   },
 
   setVisibleStores(stores, scale = this.currentMapScale || this.data.mapScale) {
+    const listState = buildStoreListState({
+      stores: this.data.stores,
+      viewportStores: stores,
+      query: this.data.searchQuery,
+      category: this.data.currentCategory,
+      blogger: this.data.currentBlogger
+    });
     const markerStores = stores.filter(store => store.hasCoords);
     this.markerClusters = {};
     this.setData({
+      viewportStores: stores,
       filteredStores: stores,
+      displayStores: listState.displayStores,
+      searchActive: listState.searchActive,
+      sheetTitle: listState.title,
+      sheetSubtitle: listState.subtitle,
+      emptyText: listState.emptyText,
+      categories: buildCategoryCounts(listState.displayStores),
       markers: buildMarkers(markerStores, this.data.activeStoreId, scale, this.markerClusters)
     });
   },
@@ -298,19 +338,6 @@ Page({
     this.mapContext.includePoints({
       points: [{ latitude: store.lat, longitude: store.lng }],
       padding: [220, 80, 260, 80]
-    });
-  },
-
-  updateCategoryCounts(stores) {
-    const counts = stores.reduce((acc, store) => {
-      if (store.category) acc[store.category] = (acc[store.category] || 0) + 1;
-      return acc;
-    }, {});
-    this.setData({
-      categories: BASE_CATEGORIES.map(cat => ({
-        ...cat,
-        count: cat.key === "all" ? stores.length : (counts[cat.key] || 0)
-      }))
     });
   },
 
@@ -385,16 +412,15 @@ function parseArray(value) {
   }
 }
 
-function matchSearch(store, query) {
-  const haystack = [
-    store.name,
-    store.category,
-    store.address,
-    store.blogger_name,
-    ...store.tags,
-    ...store.recommend_dishes
-  ].filter(Boolean).join(" ").toLowerCase();
-  return haystack.includes(query);
+function buildCategoryCounts(stores) {
+  const counts = stores.reduce((acc, store) => {
+    if (store.category) acc[store.category] = (acc[store.category] || 0) + 1;
+    return acc;
+  }, {});
+  return BASE_CATEGORIES.map(cat => ({
+    ...cat,
+    count: cat.key === "all" ? stores.length : (counts[cat.key] || 0)
+  }));
 }
 
 function filterStoresInRegion(stores, region) {
