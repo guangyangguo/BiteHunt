@@ -187,25 +187,55 @@ def api_regeocode_store(store_id):
         if not store.get('address'):
             return jsonify({'code': -1, 'error': '店铺没有地址信息'}), 400
 
-        lat, lng = geocode_address(store['address'])
+        city = _infer_store_city(store)
+        lat, lng, discovered_address = geocode_address(
+            store['address'],
+            city=city if city != '未分组' else '',
+            store_name=store.get('name', ''),
+        )
         if lat == 0 and lng == 0:
             return jsonify({'code': -1, 'error': '地理编码失败，请检查地址或配置高德API Key'}), 400
 
         conn = get_db()
-        conn.execute(
-            "UPDATE stores SET lat=?, lng=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (lat, lng, store_id)
-        )
+        if discovered_address:
+            conn.execute(
+                "UPDATE stores SET lat=?, lng=?, address=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (lat, lng, discovered_address, store_id)
+            )
+        else:
+            conn.execute(
+                "UPDATE stores SET lat=?, lng=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (lat, lng, store_id)
+            )
         conn.commit()
         conn.close()
 
         return jsonify({
             'code': 0,
-            'data': {'lat': lat, 'lng': lng},
+            'data': {'lat': lat, 'lng': lng, 'city': city, 'address': discovered_address or store['address']},
             'message': f'坐标已更新: ({lat}, {lng})',
         })
     except Exception as e:
         return jsonify({'code': -1, 'error': str(e)}), 500
+
+
+def _infer_store_city(store):
+    """从来源视频标题或地址中尽量推断城市，用于管理页分组和重新编码。"""
+    title = store.get('source_video_title') or ''
+    match = re.match(r'\s*([^.\s。．-]{2,12})[.。．-]', title)
+    if match:
+        return match.group(1).strip()
+
+    address = store.get('address') or ''
+    city_keywords = [
+        '北京', '上海', '广州', '深圳', '成都', '重庆', '杭州', '南京', '苏州', '武汉',
+        '西安', '天津', '长沙', '郑州', '青岛', '厦门', '福州', '宁波', '无锡', '合肥',
+        '洛阳', '晋城', '香港', '澳门', '台北',
+    ]
+    for city in city_keywords:
+        if city in address:
+            return city
+    return '未分组'
 
 
 # ==================== API: 博主管理 ====================

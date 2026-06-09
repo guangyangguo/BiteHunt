@@ -399,40 +399,63 @@
       return stores.map((store) => ({ type: 'store', store }));
     }
 
-    const cellSize = getClusterCellSize(map.getZoom());
-    const grouped = stores.reduce((acc, store) => {
-      const key = `${Math.floor(Number(store.lat) / cellSize)}:${Math.floor(Number(store.lng) / cellSize)}`;
-      if (!acc[key]) acc[key] = [];
-      acc[key].push(store);
-      return acc;
-    }, {});
+    const radius = getClusterPixelRadius(map.getZoom());
+    const clusters = [];
+    stores.forEach((store) => {
+      const point = map.latLngToLayerPoint([Number(store.lat), Number(store.lng)]);
+      let target = null;
+      for (const cluster of clusters) {
+        if (point.distanceTo(cluster.point) <= radius) {
+          target = cluster;
+          break;
+        }
+      }
+      if (target) {
+        target.stores.push(store);
+        target.representative = pickClusterRepresentative(target.stores);
+        target.point = map.latLngToLayerPoint([Number(target.representative.lat), Number(target.representative.lng)]);
+      } else {
+        clusters.push({
+          point,
+          stores: [store],
+          representative: store,
+        });
+      }
+    });
 
-    let clusterIndex = 0;
     const items = [];
-    Object.keys(grouped).forEach((key) => {
-      const group = grouped[key];
+    clusters.forEach((cluster, index) => {
+      const group = cluster.stores;
       if (group.length === 1) {
         items.push({ type: 'store', store: group[0] });
         return;
       }
 
-      const lat = group.reduce((sum, store) => sum + Number(store.lat), 0) / group.length;
-      const lng = group.reduce((sum, store) => sum + Number(store.lng), 0) / group.length;
+      const representative = cluster.representative;
       items.push({
         type: 'cluster',
-        id: `cluster-${clusterIndex++}`,
+        id: `cluster-${index}`,
         stores: group,
-        latLng: [lat, lng],
+        latLng: [Number(representative.lat), Number(representative.lng)],
       });
     });
     return items;
   }
 
-  function getClusterCellSize(zoom) {
-    if (zoom <= 10) return 0.16;
-    if (zoom <= 12) return 0.08;
-    if (zoom <= 14) return 0.035;
-    return 0.016;
+  function getClusterPixelRadius(zoom) {
+    if (zoom <= 6) return 42;
+    if (zoom <= 8) return 48;
+    if (zoom <= 10) return 54;
+    if (zoom <= 12) return 48;
+    return 40;
+  }
+
+  function pickClusterRepresentative(stores) {
+    return stores.slice().sort((a, b) => {
+      const ratingDiff = Number(b.rating || 0) - Number(a.rating || 0);
+      if (ratingDiff) return ratingDiff;
+      return Number(b.confidence || 0) - Number(a.confidence || 0);
+    })[0];
   }
 
   function openCluster(clusterId) {

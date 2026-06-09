@@ -49,6 +49,7 @@ Page({
   },
 
   onLoad() {
+    this.currentMapScale = this.data.mapScale;
     this.loadData();
     this.locateUser({ silent: true });
   },
@@ -109,9 +110,16 @@ Page({
   },
 
   onRegionChange(event) {
+    if (event.type === "begin") {
+      const causedBy = event.causedBy || (event.detail && event.detail.causedBy) || "";
+      if (!causedBy || causedBy === "drag" || causedBy === "scale") {
+        this.userMovedMap = true;
+      }
+      return;
+    }
     if (event.type !== "end") return;
     if (event.detail && event.detail.scale) {
-      this.setData({ mapScale: event.detail.scale });
+      this.currentMapScale = event.detail.scale;
     }
     clearTimeout(this.regionTimer);
     this.regionTimer = setTimeout(() => this.refreshViewportStores(), 180);
@@ -133,8 +141,9 @@ Page({
       sheetExpanded: false
     };
     if (store.hasCoords) {
+      this.currentMapScale = Math.max(this.data.mapScale, 15);
       updates.mapCenter = { latitude: store.lat, longitude: store.lng };
-      updates.mapScale = Math.max(this.data.mapScale, 15);
+      updates.mapScale = this.currentMapScale;
     }
     this.setData(updates);
     this.applyFilters();
@@ -153,9 +162,10 @@ Page({
       });
     } else {
       const store = stores[0];
+      this.currentMapScale = Math.min(this.data.mapScale + 2, 18);
       this.setData({
         mapCenter: { latitude: store.lat, longitude: store.lng },
-        mapScale: Math.min(this.data.mapScale + 2, 18)
+        mapScale: this.currentMapScale
       });
     }
     this.setData({ sheetExpanded: false, detailOpen: false });
@@ -173,6 +183,7 @@ Page({
       mapScale: 16,
       detailOpen: false
     });
+    this.currentMapScale = 16;
     this.focusStoreOnMap(store);
     this.showToast("已定位到店铺");
   },
@@ -195,11 +206,16 @@ Page({
     wx.getLocation({
       type: "gcj02",
       success: res => {
+        if (silent && this.userMovedMap) {
+          this.setData({ locating: false });
+          return;
+        }
         this.setData({
           mapCenter: { latitude: res.latitude, longitude: res.longitude },
           mapScale: 15,
           locating: false
         });
+        this.currentMapScale = 15;
       },
       fail: err => {
         this.setData({ locating: false });
@@ -258,7 +274,7 @@ Page({
       success: res => {
         const scale = Number(res && res.scale);
         if (scale) {
-          this.setData({ mapScale: scale });
+          this.currentMapScale = scale;
           this.setVisibleStores(stores, scale);
         } else {
           this.setVisibleStores(stores);
@@ -268,7 +284,7 @@ Page({
     });
   },
 
-  setVisibleStores(stores, scale = this.data.mapScale) {
+  setVisibleStores(stores, scale = this.currentMapScale || this.data.mapScale) {
     const markerStores = stores.filter(store => store.hasCoords);
     this.markerClusters = {};
     this.setData({

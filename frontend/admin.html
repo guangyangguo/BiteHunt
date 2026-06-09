@@ -77,6 +77,40 @@
     th { color: var(--text-muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
     td { color: var(--text-secondary); }
     tr:hover td { background: rgba(255,255,255,0.02); }
+    .video-table { table-layout: fixed; min-width: 920px; }
+    .video-table .col-title { width: 28%; }
+    .video-table .col-blogger { width: 14%; }
+    .video-table .col-date { width: 12%; }
+    .video-table .col-play { width: 10%; }
+    .video-table .col-status { width: 10%; }
+    .video-table .col-actions { width: 24%; }
+    .video-table td,
+    .video-table th { vertical-align: middle; }
+    .video-title-cell,
+    .video-blogger-cell,
+    .video-date-cell,
+    .video-play-cell {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .video-title-cell a {
+      display: block;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .video-actions-cell {
+      display: flex;
+      gap: 6px;
+      flex-wrap: nowrap;
+      align-items: center;
+    }
+    .video-actions-cell .btn {
+      padding: 5px 8px;
+      white-space: nowrap;
+    }
 
     /* Status badges */
     .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
@@ -523,18 +557,26 @@
         const videos = await API.getVideos(params);
         if (!videos.length) { list.innerHTML = '<p style="color:var(--text-muted);padding:20px;">暂无视频，请先添加博主并拉取视频。</p>'; return; }
 
-        list.innerHTML = `<div class="table-wrap"><table>
-          <thead><tr><th>标题</th><th>博主</th><th>日期</th><th>播放</th><th>状态</th><th>操作</th></tr></thead>
-          <tbody>${videos.map(v => `
+        const grouped = groupItemsByCity(videos);
+        list.innerHTML = renderCityGroups(grouped, videosInCity => `<div class="table-wrap"><table class="video-table">
+          <thead><tr>
+            <th class="col-title">标题</th>
+            <th class="col-blogger">博主</th>
+            <th class="col-date">日期</th>
+            <th class="col-play">播放</th>
+            <th class="col-status">状态</th>
+            <th class="col-actions">操作</th>
+          </tr></thead>
+          <tbody>${videosInCity.map(v => `
             <tr>
-              <td style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${v.title}">
+              <td class="video-title-cell" title="${v.title}">
                 <a href="${v.url}" target="_blank" style="color:var(--text-primary);">${v.title}</a>
               </td>
-              <td>${v.blogger_name || '-'}</td>
-              <td>${v.publish_date || '-'}</td>
-              <td>${v.play_count || '-'}</td>
+              <td class="video-blogger-cell" title="${v.blogger_name || '-'}">${v.blogger_name || '-'}</td>
+              <td class="video-date-cell">${v.publish_date || '-'}</td>
+              <td class="video-play-cell">${v.play_count || '-'}</td>
               <td><span class="badge badge-${v.status}">${statusLabel(v.status)}</span></td>
-              <td>
+              <td class="video-actions-cell">
                 ${v.status === 'new' ? `<button class="btn btn-primary btn-xs" onclick="analyzeVideo(${v.id})">🤖 分析</button>` : ''}
                 <button class="btn btn-danger btn-xs" onclick="deleteVideo(${v.id}, '${v.title.replace(/'/g, "\\'")}')">🗑️</button>
                 ${v.status === 'analyzed' ? `<button class="btn btn-secondary btn-xs" onclick="analyzeVideo(${v.id})">🔄 重新分析</button>` : ''}
@@ -543,7 +585,7 @@
                 ${v.status === 'analyzed' || v.status === 'no_store' ? `<button class="btn btn-secondary btn-xs" onclick="showAnalysisDetail(${v.id})">📋 查看分析</button>` : ''}</td>
             </tr>
           `).join('')}</tbody>
-        </table></div>`;
+        </table></div>`);
       } catch (e) { list.innerHTML = '<p style="color:#ef4444;">加载失败: ' + e.message + '</p>'; }
     }
 
@@ -592,7 +634,8 @@
           list.innerHTML = '<p style="color:var(--text-muted);padding:20px;">没有待分析的视频。先去"视频列表"拉取博主的视频吧。</p>';
           return;
         }
-        list.innerHTML = videos.map(v => `
+        const grouped = groupItemsByCity(videos);
+        list.innerHTML = renderCityGroups(grouped, videosInCity => videosInCity.map(v => `
           <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);
             border-radius:var(--radius-sm);margin-bottom:6px;background:var(--bg-tertiary);">
             <input type="checkbox" class="analyze-checkbox" value="${v.id}" onchange="updateSelectedCount()">
@@ -602,7 +645,7 @@
             <span style="font-size:12px;color:var(--text-muted);">${v.blogger_name || ''}</span>
             <span style="font-size:12px;color:var(--text-muted);">${v.publish_date || ''}</span>
           </div>
-        `).join('');
+        `).join(''));
         updateSelectedCount();
       } catch (e) { list.innerHTML = '<p style="color:#ef4444;">加载失败: ' + e.message + '</p>'; }
     }
@@ -664,7 +707,12 @@
           list.innerHTML = '<p style="color:var(--text-muted);padding:20px;">暂无店铺数据。</p>';
           return;
         }
-        list.innerHTML = stores.map(s => {
+        const grouped = groupItemsByCity(stores);
+        list.innerHTML = renderCityGroups(grouped, items => items.map(renderStoreManageItem).join(''), '家');
+      } catch (e) { list.innerHTML = '<p style="color:#ef4444;">加载失败: ' + e.message + '</p>'; }
+    }
+
+    function renderStoreManageItem(s) {
           const noCoords = !s.lat || !s.lng || (s.lat === 0 && s.lng === 0);
           return `
           <div style="display:flex;align-items:center;gap:10px;padding:10px;border:1px solid var(--border);
@@ -682,8 +730,50 @@
               <button class="btn btn-danger btn-xs" onclick="deleteStore(${s.id})">🗑️</button>
             </div>
           </div>
-        `}).join('');
-      } catch (e) { list.innerHTML = '<p style="color:#ef4444;">加载失败: ' + e.message + '</p>'; }
+        `;
+    }
+
+    function groupItemsByCity(items) {
+      return items.reduce((acc, item) => {
+        const city = inferItemCity(item);
+        if (!acc[city]) acc[city] = [];
+        acc[city].push(item);
+        return acc;
+      }, {});
+    }
+
+    function renderCityGroups(grouped, renderItems, unit = '条') {
+      return Object.keys(grouped).sort((a, b) => {
+        if (a === '未分组') return 1;
+        if (b === '未分组') return -1;
+        return a.localeCompare(b, 'zh-CN');
+      }).map(city => {
+        const items = grouped[city];
+        return `
+          <div class="city-store-group" style="margin-bottom:18px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 8px;">
+              <h4 style="font-size:15px;color:var(--text-primary);font-weight:700;">${city}</h4>
+              <span class="badge" style="background:rgba(255,107,53,0.12);color:var(--accent);">${items.length} ${unit}</span>
+            </div>
+            ${renderItems(items)}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function inferItemCity(item) {
+      const title = item.source_video_title || item.title || '';
+      const titleMatch = title.match(/^\s*([^.\s。．-]{2,12})[.。．-]/);
+      if (titleMatch) return titleMatch[1].trim();
+
+      const address = item.address || '';
+      const cityKeywords = [
+        '北京','上海','广州','深圳','成都','重庆','杭州','南京','苏州','武汉',
+        '西安','天津','长沙','郑州','青岛','厦门','福州','宁波','无锡','合肥',
+        '洛阳','晋城','香港','澳门','台北'
+      ];
+      const found = cityKeywords.find(city => address.includes(city));
+      return found || '未分组';
     }
 
     async function regeocodeStore(id) {
