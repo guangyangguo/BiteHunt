@@ -1,0 +1,60 @@
+<view class="mine-page">
+  <view class="profile-card">
+    <view class="avatar">
+      <image wx:if="{{profile.avatar}}" src="{{profile.avatar}}" mode="aspectFill"></image>
+      <text wx:else>{{profile.initial}}</text>
+    </view>
+    <view class="profile-main">
+      <view class="nickname">{{profile.nickname}}</view>
+      <view class="profile-subtitle">{{profile.subtitle}}</view>
+    </view>
+    <button class="login-btn" bindtap="onLoginTap">{{profile.is_logged_in ? '管理' : '登录'}}</button>
+  </view>
+
+  <view class="stats-grid">
+    <view class="stat-item">
+      <text class="stat-value">{{profile.stats.favorites}}</text>
+      <text class="stat-label">收藏</text>
+    </view>
+    <view class="stat-item">
+      <text class="stat-value">{{profile.stats.visited}}</text>
+      <text class="stat-label">去过</text>
+    </view>
+    <view class="stat-item">
+      <text class="stat-value">{{profile.stats.guides}}</text>
+      <text class="stat-label">问过</text>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-title">我的探店</view>
+    <view class="menu-list">
+      <button class="menu-item" bindtap="onPlaceholderTap" data-name="收藏店铺">
+        <text>收藏店铺</text>
+        <text class="menu-arrow">›</text>
+      </button>
+      <button class="menu-item" bindtap="onPlaceholderTap" data-name="浏览历史">
+        <text>浏览历史</text>
+        <text class="menu-arrow">›</text>
+      </button>
+      <button class="menu-item" bindtap="onPlaceholderTap" data-name="口味偏好">
+        <text>口味偏好</text>
+        <text class="menu-arrow">›</text>
+      </button>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-title">账号与服务</view>
+    <view class="menu-list">
+      <button class="menu-item" bindtap="onPlaceholderTap" data-name="个人资料">
+        <text>个人资料</text>
+        <text class="menu-arrow">›</text>
+      </button>
+      <button class="menu-item" bindtap="onPlaceholderTap" data-name="设置">
+        <text>设置</text>
+        <text class="menu-arrow">›</text>
+      </button>
+    </view>
+  </view>
+</view>

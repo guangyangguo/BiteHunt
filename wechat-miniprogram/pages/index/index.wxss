@@ -27,13 +27,52 @@
   color: #f5f5f7;
   background: rgba(18, 20, 28, 0.88);
   box-shadow: 0 12rpx 36rpx rgba(0, 0, 0, 0.34);
-  font-size: 34rpx;
-  font-weight: 800;
 }
 
 .map-locate-btn.loading {
   color: #ffffff;
   background: rgba(255, 107, 53, 0.92);
+}
+
+.locate-glyph {
+  position: relative;
+  width: 28rpx;
+  height: 28rpx;
+  border: 4rpx solid #f5f5f7;
+  border-radius: 999rpx;
+}
+
+.locate-line {
+  position: absolute;
+  background: #f5f5f7;
+}
+
+.locate-line.vertical {
+  left: 50%;
+  top: -10rpx;
+  width: 4rpx;
+  height: 48rpx;
+  margin-left: -2rpx;
+}
+
+.locate-line.horizontal {
+  top: 50%;
+  left: -10rpx;
+  width: 48rpx;
+  height: 4rpx;
+  margin-top: -2rpx;
+}
+
+.locate-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8rpx;
+  height: 8rpx;
+  margin-left: -4rpx;
+  margin-top: -4rpx;
+  border-radius: 999rpx;
+  background: #f5f5f7;
 }
 
 .top-card {
@@ -101,37 +140,18 @@
   font-size: 28rpx;
 }
 
-.filter-card {
-  position: fixed;
-  top: calc(116rpx + env(safe-area-inset-top));
-  left: 20rpx;
-  right: 20rpx;
-  z-index: 19;
-  display: flex;
-  align-items: center;
-  gap: 12rpx;
-  transition: opacity 180ms ease, transform 180ms ease;
-}
-
-.filter-card.hidden {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-12rpx);
-}
-
 .filter-chip {
-  max-width: 520rpx;
-  height: 60rpx;
+  max-width: 172rpx;
+  height: 72rpx;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 10rpx;
-  padding: 0 22rpx;
+  padding: 0 18rpx;
   border: 1rpx solid rgba(255, 255, 255, 0.12);
-  border-radius: 999rpx;
+  border-radius: 28rpx;
   color: #d9deea;
-  background: rgba(18, 20, 28, 0.82);
-  box-shadow: 0 10rpx 28rpx rgba(0, 0, 0, 0.24);
-  backdrop-filter: blur(18px);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .filter-chip.active {
@@ -140,31 +160,28 @@
   background: rgba(255, 107, 53, 0.9);
 }
 
-.filter-label {
-  color: inherit;
-  font-size: 22rpx;
-  font-weight: 700;
-  opacity: 0.72;
-}
-
 .filter-value {
-  max-width: 360rpx;
+  max-width: 136rpx;
   overflow: hidden;
   color: inherit;
-  font-size: 24rpx;
+  font-size: 23rpx;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .filter-clear {
-  width: 112rpx;
-  height: 60rpx;
-  border-radius: 999rpx;
+  width: 88rpx;
+  height: 72rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 28rpx;
   color: #f5f5f7;
-  background: rgba(18, 20, 28, 0.82);
-  font-size: 24rpx;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 23rpx;
   font-weight: 700;
+  line-height: 1;
 }
 
 .category-bar {
@@ -295,10 +312,26 @@
 .sheet-toggle {
   width: 64rpx;
   height: 64rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 24rpx;
-  color: #f5f5f7;
   background: rgba(255, 255, 255, 0.08);
-  font-size: 36rpx;
+}
+
+.sheet-chevron {
+  width: 18rpx;
+  height: 18rpx;
+  border-left: 4rpx solid #f5f5f7;
+  border-top: 4rpx solid #f5f5f7;
+}
+
+.sheet-chevron.up {
+  transform: translateY(5rpx) rotate(45deg);
+}
+
+.sheet-chevron.down {
+  transform: translateY(-5rpx) rotate(225deg);
 }
 
 .store-list {
@@ -566,14 +599,43 @@
   line-height: 1.6;
 }
 
-.primary-btn {
-  height: 78rpx;
+.action-row {
+  display: flex;
+  gap: 14rpx;
   margin-top: 20rpx;
+}
+
+.primary-btn {
+  flex: 1;
+  height: 78rpx;
   padding: 0 30rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 28rpx;
   color: #fff;
   background: #ff6b35;
   font-size: 27rpx;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+}
+
+.secondary-btn {
+  flex: 1;
+  height: 78rpx;
+  padding: 0 30rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1rpx solid rgba(255, 255, 255, 0.12);
+  border-radius: 28rpx;
+  color: #f5f5f7;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 27rpx;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
 }
 
 .tag-row {
@@ -645,11 +707,16 @@
   height: 68rpx;
   margin-top: 18rpx;
   padding: 0 24rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 24rpx;
   color: #ffffff;
   background: #00a1d6;
   font-size: 24rpx;
   font-weight: 700;
+  line-height: 1;
+  text-align: center;
 }
 
 .note {

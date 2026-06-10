@@ -11,10 +11,16 @@ import sys
 import os
 import tempfile
 import traceback
+import time
+import uuid
+from contextlib import contextmanager
 
 # 确保可以导入 database
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from database import add_store, update_video_status, add_analysis_log, delete_stores_by_video
+from database import (
+    add_store, update_video_status, add_analysis_log, delete_stores_by_video,
+    start_analysis_step, finish_analysis_step, attach_analysis_steps_to_log,
+)
 from config import get
 try:
     from services.bilibili import get_video_detail, fetch_video_subtitle, fetch_video_audio
@@ -31,6 +37,79 @@ def _log(msg):
     from datetime import datetime
     ts = datetime.now().strftime('%H:%M:%S')
     print(f"[{ts}] {msg}", flush=True)
+
+
+def _summary(value, limit=1000):
+    """生成适合落库展示的短摘要，避免存大段字幕/响应。"""
+    if value is None:
+        return ''
+    if not isinstance(value, str):
+        try:
+            value = json.dumps(value, ensure_ascii=False)
+        except Exception:
+            value = str(value)
+    value = value.strip()
+    if len(value) <= limit:
+        return value
+    return value[:limit] + f"\n...（已截断，原始长度 {len(value)} 字符）"
+
+
+class AnalysisStepRecorder:
+    """一次视频分析的步骤记录器。"""
+
+    def __init__(self, video_id, enabled=True):
+        self.video_id = video_id
+        self.enabled = enabled
+        self.run_id = uuid.uuid4().hex
+
+    @contextmanager
+    def step(self, name, input_summary='', metadata=None):
+        step_id = None
+        if self.enabled:
+            try:
+                step_id = start_analysis_step(
+                    self.video_id,
+                    self.run_id,
+                    name,
+                    input_summary=_summary(input_summary),
+                    metadata=metadata or {},
+                )
+            except Exception as e:
+                _log(f"分析步骤记录失败({name}): {e}")
+        started = time.time()
+        state = {'output_summary': '', 'metadata': {}, 'status': 'success'}
+        try:
+            yield state
+            elapsed_ms = int((time.time() - started) * 1000)
+            if step_id:
+                state['metadata']['elapsed_ms_client'] = elapsed_ms
+                finish_analysis_step(
+                    step_id,
+                    status=state.get('status', 'success'),
+                    output_summary=_summary(state.get('output_summary', '')),
+                    metadata=state.get('metadata', {}),
+                    duration_ms=elapsed_ms,
+                )
+        except Exception as e:
+            elapsed_ms = int((time.time() - started) * 1000)
+            if step_id:
+                finish_analysis_step(
+                    step_id,
+                    status='failed',
+                    output_summary=_summary(state.get('output_summary', '')),
+                    error_message=str(e),
+                    metadata=state.get('metadata', {}),
+                    duration_ms=elapsed_ms,
+                )
+            raise
+
+    def attach_log(self, analysis_log_id):
+        if not self.enabled or not analysis_log_id:
+            return
+        try:
+            attach_analysis_steps_to_log(self.run_id, analysis_log_id)
+        except Exception as e:
+            _log(f"分析步骤关联日志失败: {e}")
 
 
 # ==================== 分析提示词 ====================
@@ -444,15 +523,18 @@ def analyze_video(video_id, data_provider=None, progress_callback=None):
     _log(f"{'='*50}")
     _log(f"开始分析视频 video_id={video_id}")
     _log(f"{'='*50}")
+    recorder = AnalysisStepRecorder(video_id, enabled=not data_provider)
 
     # Step 1: 获取视频信息
-    if data_provider:
-        video = data_provider
-        _log(f"Step1: 使用 data_provider, title={video.get('title', '?')[:50]}")
-    else:
-        from database import get_video
-        video = get_video(video_id)
-        _log(f"Step1: 数据库查询 video_id={video_id}, 结果={'找到' if video else '不存在'}")
+    with recorder.step('获取视频信息', metadata={'step': 1}) as step:
+        if data_provider:
+            video = data_provider
+            _log(f"Step1: 使用 data_provider, title={video.get('title', '?')[:50]}")
+        else:
+            from database import get_video
+            video = get_video(video_id)
+            _log(f"Step1: 数据库查询 video_id={video_id}, 结果={'找到' if video else '不存在'}")
+        step['output_summary'] = f"title={video.get('title', '')[:80]}, bvid={video.get('platform_video_id', '')}" if video else '视频不存在'
 
     if not video:
         _log("Step1: 视频不存在, 返回失败")
@@ -462,59 +544,84 @@ def analyze_video(video_id, data_provider=None, progress_callback=None):
     _progress(1, '获取视频信息')
 
     # Step 2: 构建分析内容
-    content_parts = [f"【视频标题】{video['title']}"]
+    with recorder.step('构建分析内容', input_summary=video.get('title', ''), metadata={'step': 2}) as step:
+        content_parts = [f"【视频标题】{video['title']}"]
 
-    desc = video.get('description', '')
-    if desc:
-        content_parts.append(f"【视频描述】{desc}")
-        _log(f"Step2: 描述长度={len(desc)}")
-    else:
-        _log("Step2: 无描述")
+        desc = video.get('description', '')
+        if desc:
+            content_parts.append(f"【视频描述】{desc}")
+            _log(f"Step2: 描述长度={len(desc)}")
+        else:
+            _log("Step2: 无描述")
 
-    tags = video.get('tags', '')
-    if isinstance(tags, str):
-        try:
-            tags = json.loads(tags)
-        except json.JSONDecodeError:
-            tags = []
-    if tags:
-        content_parts.append(f"【视频标签】{', '.join(tags)}")
-        _log(f"Step2: 标签={tags}")
+        tags = video.get('tags', '')
+        if isinstance(tags, str):
+            try:
+                tags = json.loads(tags)
+            except json.JSONDecodeError:
+                tags = []
+        if tags:
+            content_parts.append(f"【视频标签】{', '.join(tags)}")
+            _log(f"Step2: 标签={tags}")
+        step['output_summary'] = f"描述长度={len(desc or '')}, 标签数={len(tags or [])}"
 
     _progress(2, '构建分析内容')
 
     # Step 3: 获取视频文本内容
     bvid = video.get('platform_video_id', '')
     _log(f"Step3: 开始获取视频文本内容 bvid={bvid}")
-    text_content, text_source = _get_video_text_content(bvid)
-    if text_content:
-        content_parts.append(f"【视频文本内容（{text_source}）】\n{text_content}")
-        _log(f"Step3: 成功获取文本内容, 来源={text_source}, 长度={len(text_content)}")
-    else:
-        _log("Step3: 未能获取文本内容, 仅使用元数据分析")
+    with recorder.step('获取字幕或语音转写', input_summary=f"bvid={bvid}", metadata={'step': 3}) as step:
+        text_content, text_source = _get_video_text_content(bvid)
+        if text_content:
+            content_parts.append(f"【视频文本内容（{text_source}）】\n{text_content}")
+            _log(f"Step3: 成功获取文本内容, 来源={text_source}, 长度={len(text_content)}")
+            step['output_summary'] = f"来源={text_source}, 长度={len(text_content)}字符"
+            step['metadata'].update({'text_source': text_source, 'text_length': len(text_content)})
+        else:
+            _log("Step3: 未能获取文本内容, 仅使用元数据分析")
+            step['output_summary'] = '未获取到字幕/转写，使用视频元数据分析'
+            step['metadata'].update({'text_source': '', 'text_length': 0})
 
     _progress(3, '获取视频文本')
 
-    user_content = '\n\n'.join(content_parts)
-    _log(f"Step4: 最终分析内容总长度={len(user_content)}字符")
+    with recorder.step('构建分析 Prompt', metadata={'step': 4}) as step:
+        user_content = '\n\n'.join(content_parts)
+        _log(f"Step4: 最终分析内容总长度={len(user_content)}字符")
+        step['output_summary'] = f"system_prompt={len(SYSTEM_PROMPT)}字符, user_prompt={len(user_content)}字符"
+        step['metadata'].update({'system_prompt_chars': len(SYSTEM_PROMPT), 'user_prompt_chars': len(user_content)})
     _progress(4, '构建分析Prompt')
 
     # Step 5: 调用 LLM
     _log("Step5: 调用LLM分析...")
     _progress(5, 'AI分析中（可能需要30-60秒）')
-    result = call_llm([
-        {'role': 'system', 'content': SYSTEM_PROMPT},
-        {'role': 'user', 'content': user_content},
-    ])
+    with recorder.step('调用大模型', input_summary=f"user_prompt={len(user_content)}字符", metadata={'step': 5}) as step:
+        result = call_llm([
+            {'role': 'system', 'content': SYSTEM_PROMPT},
+            {'role': 'user', 'content': user_content},
+        ])
+        if 'error' in result:
+            step['output_summary'] = result['error']
+            step['status'] = 'failed'
+            step['metadata'].update({'success': False})
+        else:
+            step['output_summary'] = f"响应长度={len(result['content'])}字符, model={result.get('model', '')}"
+            step['metadata'].update({
+                'success': True,
+                'model': result.get('model', ''),
+                'prompt_tokens': result.get('prompt_tokens', 0),
+                'completion_tokens': result.get('completion_tokens', 0),
+                'response_chars': len(result.get('content', '')),
+            })
 
     if 'error' in result:
         _log(f"Step5: LLM返回错误 - {result['error']}")
         if not data_provider:
-            add_analysis_log(
+            log_id = add_analysis_log(
                 video_id=video_id, model_name='', raw_response='',
                 extracted_data={}, store_ids=[], success=False,
                 error_message=result['error'],
             )
+            recorder.attach_log(log_id)
         return {'success': False, 'error': result['error']}
 
     _log(f"Step5: LLM返回成功, 响应长度={len(result['content'])}")
@@ -522,11 +629,18 @@ def analyze_video(video_id, data_provider=None, progress_callback=None):
 
     # Step 6: 解析JSON
     _log("Step6: 解析LLM响应...")
-    parsed = parse_llm_response(result['content'])
+    with recorder.step('解析 JSON', input_summary=result['content'], metadata={'step': 6}) as step:
+        parsed = parse_llm_response(result['content'])
+        if parsed:
+            step['output_summary'] = f"解析成功，店铺数={len(parsed.get('stores', []))}"
+            step['metadata'].update({'stores_count': len(parsed.get('stores', []))})
+        else:
+            step['output_summary'] = '解析失败'
+            step['status'] = 'failed'
     if not parsed:
         _log("Step6: JSON解析失败")
         if not data_provider:
-            add_analysis_log(
+            log_id = add_analysis_log(
                 video_id=video_id,
                 model_name=result.get('model', ''),
                 raw_response=result['content'],
@@ -535,6 +649,7 @@ def analyze_video(video_id, data_provider=None, progress_callback=None):
                 prompt_tokens=result.get('prompt_tokens', 0),
                 completion_tokens=result.get('completion_tokens', 0),
             )
+            recorder.attach_log(log_id)
         return {
             'success': False,
             'error': '无法解析LLM返回的JSON',
@@ -543,8 +658,10 @@ def analyze_video(video_id, data_provider=None, progress_callback=None):
 
     # Step 7: 去重 — 先清理该视频之前提取的店铺
     if not data_provider:
-        delete_stores_by_video(video_id)
-        _log("Step7: 已清理该视频之前提取的店铺")
+        with recorder.step('清理旧店铺数据', metadata={'step': 7}) as step:
+            delete_stores_by_video(video_id)
+            _log("Step7: 已清理该视频之前提取的店铺")
+            step['output_summary'] = '已软删除该视频此前提取的店铺'
     _progress(7, '清理旧数据')
 
     # Step 8: 提取店铺
@@ -554,75 +671,92 @@ def analyze_video(video_id, data_provider=None, progress_callback=None):
     _progress(8, f'提取店铺信息（共{len(stores_data)}家）')
 
     store_ids = []
-    for i, store in enumerate(stores_data):
-        store_name = store.get('name', '')
-        if not store_name:
-            _log(f"Step8: 店铺[{i}] 无名称, 跳过")
-            continue
+    with recorder.step('地理编码与店铺入库', input_summary={'stores': stores_data}, metadata={'step': 8}) as step:
+        geocode_hits = 0
+        skipped = 0
+        for i, store in enumerate(stores_data):
+            store_name = store.get('name', '')
+            if not store_name:
+                _log(f"Step8: 店铺[{i}] 无名称, 跳过")
+                skipped += 1
+                continue
 
-        _log(f"Step8: 处理店铺[{i}]: {store_name}")
+            _log(f"Step8: 处理店铺[{i}]: {store_name}")
 
-        city = store.get('city', '成都')
-        district = store.get('district', '')
-        address = store.get('address', '')
+            city = store.get('city', '成都')
+            district = store.get('district', '')
+            address = store.get('address', '')
 
-        # 构建完整地址：优先用 address，其次 city+district，最后只用 city
-        if address:
-            full_address = f"{city}{district}{address}".strip()
-        elif district:
-            full_address = f"{city}{district}"
-        else:
-            full_address = city
+            # 构建完整地址：优先用 address，其次 city+district，最后只用 city
+            if address:
+                full_address = f"{city}{district}{address}".strip()
+            elif district:
+                full_address = f"{city}{district}"
+            else:
+                full_address = city
 
-        # 地理编码（传入店铺名提升精度）
-        lat, lng, poi_addr = 0, 0, ''
-        _log(f"Step8: 尝试地理编码: address={full_address}, store={store_name}")
-        lat, lng, poi_addr = geocode_address(full_address, city, store_name)
-        _log(f"Step8: 地理编码结果: ({lat}, {lng})")
+            # 地理编码（传入店铺名提升精度）
+            lat, lng, poi_addr = 0, 0, ''
+            _log(f"Step8: 尝试地理编码: address={full_address}, store={store_name}")
+            lat, lng, poi_addr = geocode_address(full_address, city, store_name)
+            _log(f"Step8: 地理编码结果: ({lat}, {lng})")
+            if lat and lng:
+                geocode_hits += 1
 
-        # 优先用 POI 搜索到的地址
-        final_address = poi_addr if poi_addr else full_address
+            # 优先用 POI 搜索到的地址
+            final_address = poi_addr if poi_addr else full_address
 
-        store_data = {
-            'name': store_name,
-            'category': store.get('category', '其他'),
-            'lat': lat, 'lng': lng,
-            'address': final_address,
-            'avg_price': store.get('avg_price', 0),
-            'rating': store.get('rating', 0),
-            'recommend_dishes': store.get('recommend_dishes', []),
-            'tags': store.get('tags', []),
-            'note': store.get('note', ''),
-            'source_video_id': video_id if not data_provider else video.get('id'),
-            'source_blogger_id': video.get('blogger_id') if not data_provider else video.get('blogger_id'),
-            'confidence': store.get('confidence', 0.5),
-        }
+            store_data = {
+                'name': store_name,
+                'category': store.get('category', '其他'),
+                'lat': lat, 'lng': lng,
+                'address': final_address,
+                'avg_price': store.get('avg_price', 0),
+                'rating': store.get('rating', 0),
+                'recommend_dishes': store.get('recommend_dishes', []),
+                'tags': store.get('tags', []),
+                'note': store.get('note', ''),
+                'source_video_id': video_id if not data_provider else video.get('id'),
+                'source_blogger_id': video.get('blogger_id') if not data_provider else video.get('blogger_id'),
+                'confidence': store.get('confidence', 0.5),
+            }
 
-        if not data_provider:
-            sid = add_store(store_data)
-            store_ids.append(sid)
-            _log(f"Step8: 店铺已保存 store_id={sid}")
-        else:
-            store_ids.append(store_data)
+            if not data_provider:
+                sid = add_store(store_data)
+                store_ids.append(sid)
+                _log(f"Step8: 店铺已保存 store_id={sid}")
+            else:
+                store_ids.append(store_data)
+        step['output_summary'] = f"提取={len(stores_data)}，保存={len(store_ids)}，地理编码命中={geocode_hits}，跳过={skipped}"
+        step['metadata'].update({
+            'stores_extracted': len(stores_data),
+            'stores_saved': len(store_ids),
+            'geocode_hits': geocode_hits,
+            'skipped': skipped,
+        })
 
     # Step 9: 记录日志和更新状态
     if not data_provider:
-        _log("Step9: 记录分析日志...")
-        add_analysis_log(
-            video_id=video_id,
-            model_name=result.get('model', ''),
-            raw_response=result['content'],
-            extracted_data=parsed,
-            store_ids=store_ids,
-            success=True,
-            error_message='',
-            prompt_tokens=result.get('prompt_tokens', 0),
-            completion_tokens=result.get('completion_tokens', 0),
-        )
+        with recorder.step('保存分析结果', metadata={'step': 9}) as step:
+            _log("Step9: 记录分析日志...")
+            log_id = add_analysis_log(
+                video_id=video_id,
+                model_name=result.get('model', ''),
+                raw_response=result['content'],
+                extracted_data=parsed,
+                store_ids=store_ids,
+                success=True,
+                error_message='',
+                prompt_tokens=result.get('prompt_tokens', 0),
+                completion_tokens=result.get('completion_tokens', 0),
+            )
 
-        new_status = 'analyzed' if store_ids else 'no_store'
-        update_video_status(video_id, new_status)
-        _log(f"Step9: 视频状态更新为 {new_status}")
+            new_status = 'analyzed' if store_ids else 'no_store'
+            update_video_status(video_id, new_status)
+            recorder.attach_log(log_id)
+            _log(f"Step9: 视频状态更新为 {new_status}")
+            step['output_summary'] = f"analysis_log_id={log_id}, status={new_status}, store_ids={store_ids}"
+            step['metadata'].update({'analysis_log_id': log_id, 'video_status': new_status, 'store_ids': store_ids})
 
     _progress(9, '保存结果完成')
 

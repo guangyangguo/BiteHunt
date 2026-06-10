@@ -5,6 +5,7 @@ const {
   buildStoreListState,
   filterStores
 } = require("./search-state");
+const { buildOpenLocationPayload } = require("./navigation");
 
 const BASE_CATEGORIES = [
   { key: "all", icon: "⌘", label: "全部" },
@@ -69,6 +70,10 @@ Page({
     this.locateUser({ silent: true });
   },
 
+  onShow() {
+    this.processPendingStore();
+  },
+
   onReady() {
     this.mapContext = wx.createMapContext("storeMap", this);
     this.refreshViewportStores();
@@ -85,6 +90,7 @@ Page({
         loading: false
       });
       this.applyFilters();
+      this.processPendingStore();
     } catch (err) {
       const hint = getApiHint();
       this.setData({
@@ -181,6 +187,27 @@ Page({
     this.applyFilters();
   },
 
+  processPendingStore() {
+    const id = Number(wx.getStorageSync("pendingStoreId") || 0);
+    if (!id || !this.data.stores.length) return;
+    const shouldFocus = Boolean(wx.getStorageSync("pendingStoreFocus"));
+    wx.removeStorageSync("pendingStoreId");
+    wx.removeStorageSync("pendingStoreFocus");
+    this.openStore(id);
+    if (shouldFocus) {
+      const store = this.data.stores.find(item => item.id === id);
+      if (store && store.hasCoords) {
+        this.setData({
+          mapCenter: { latitude: store.lat, longitude: store.lng },
+          mapScale: 16,
+          detailOpen: false
+        });
+        this.currentMapScale = 16;
+        this.focusStoreOnMap(store);
+      }
+    }
+  },
+
   openCluster(markerId) {
     const stores = this.markerClusters[markerId] || [];
     const points = stores.map(store => ({ latitude: store.lat, longitude: store.lng }));
@@ -217,6 +244,18 @@ Page({
     this.currentMapScale = 16;
     this.focusStoreOnMap(store);
     this.showToast("已定位到店铺");
+  },
+
+  navigateToStore() {
+    const store = this.data.selectedStore;
+    if (!store || !store.hasCoords) {
+      this.showToast("暂无店铺坐标，无法导航");
+      return;
+    }
+    wx.openLocation({
+      ...buildOpenLocationPayload(store),
+      fail: () => this.showToast("无法打开位置导航")
+    });
   },
 
   copySourceVideo() {

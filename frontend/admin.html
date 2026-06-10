@@ -141,14 +141,16 @@
     .stat-card .stat-label { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
 
   /* Progress modal */
-  .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(0,0,0,0.6); z-index: 9998; display: flex; align-items: center;
-    justify-content: center; }
+  .modal-overlay { position: fixed; right: 24px; bottom: 24px; width: min(440px, calc(100vw - 48px));
+    z-index: 9998; display: block; pointer-events: none; touch-action: none; }
   .modal-overlay.hidden { display: none; }
   .modal-box { background: var(--bg-secondary); border: 1px solid var(--border);
-    border-radius: var(--radius-lg); padding: 32px; max-width: 520px; width: 90%;
-    box-shadow: var(--shadow-lg); }
-  .modal-box h3 { font-size: 18px; color: var(--text-primary); margin-bottom: 16px; }
+    border-radius: var(--radius-md); padding: 18px; width: 100%;
+    box-shadow: var(--shadow-lg); pointer-events: auto; }
+  .progress-drag-handle { display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin: -4px -4px 14px; padding: 4px; cursor: move; user-select: none; }
+  .modal-box h3 { font-size: 18px; color: var(--text-primary); margin: 0; }
+  .progress-drag-hint { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
   .progress-bar-wrap { width: 100%; height: 8px; background: var(--bg-tertiary);
     border-radius: 4px; overflow: hidden; margin: 12px 0; }
   .progress-bar-fill { height: 100%; background: var(--accent); border-radius: 4px;
@@ -189,6 +191,33 @@
   .analysis-token { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
     border-radius: var(--radius-sm); background: var(--bg-tertiary); font-size: 12px;
     color: var(--text-secondary); margin-right: 8px; margin-bottom: 8px; }
+  .analysis-steps { display: flex; flex-direction: column; gap: 10px; }
+  .analysis-step { position: relative; padding: 12px 12px 12px 38px; border: 1px solid var(--border);
+    border-radius: var(--radius-sm); background: var(--bg-tertiary); }
+  .analysis-step::before { content: ''; position: absolute; left: 15px; top: 18px; bottom: -12px;
+    width: 1px; background: var(--border); }
+  .analysis-step:last-child::before { display: none; }
+  .analysis-step-dot { position: absolute; left: 8px; top: 14px; width: 15px; height: 15px;
+    border-radius: 50%; background: var(--text-muted); box-shadow: 0 0 0 3px var(--bg-secondary); }
+  .analysis-step.success .analysis-step-dot { background: #22c55e; }
+  .analysis-step.failed .analysis-step-dot { background: #ef4444; }
+  .analysis-step.running .analysis-step-dot { background: #f59e0b; }
+  .analysis-step-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .analysis-step-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+  .analysis-step-time { flex-shrink: 0; color: var(--text-muted); font-size: 11px; }
+  .analysis-step-status { margin-top: 4px; color: var(--text-secondary); font-size: 12px; }
+  .analysis-step-summary { margin-top: 8px; padding: 8px 10px; border-radius: var(--radius-sm);
+    background: var(--bg-primary); color: var(--text-muted); font-size: 11px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word; }
+  .analysis-step-error { margin-top: 8px; color: #ef4444; font-size: 12px; line-height: 1.5; }
+  .pagination-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    margin-top: 12px; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: var(--radius-sm); background: var(--bg-secondary); flex-wrap: wrap; }
+  .pagination-info { color: var(--text-muted); font-size: 12px; }
+  .pagination-actions { display: flex; align-items: center; gap: 8px; }
+  .page-size-select { padding: 6px 10px; border: 1px solid var(--border);
+    border-radius: var(--radius-sm); color: var(--text-primary); background: var(--bg-tertiary);
+    font-size: 12px; }
 
   </style>
 </head>
@@ -198,7 +227,10 @@
     <!-- Progress Modal -->
 <div id="analyzeProgressModal" class="modal-overlay hidden">
   <div class="modal-box">
-    <h3>正在AI分析视频...</h3>
+    <div class="progress-drag-handle" id="progressDragHandle">
+      <h3>正在AI分析视频...</h3>
+      <span class="progress-drag-hint">拖动移动</span>
+    </div>
     <div class="progress-bar-wrap"><div id="progressBarFill" class="progress-bar-fill"></div></div>
     <div class="progress-text" id="progressText">0 / 0</div>
     <div class="progress-current" id="progressCurrent">准备中...</div>
@@ -312,12 +344,12 @@
     <!-- ===== 视频列表 ===== -->
     <div id="panel-videos" class="panel">
       <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center;">
-        <select id="videoBloggerFilter" onchange="loadVideos()"
+        <select id="videoBloggerFilter" onchange="resetVideoPage()"
                 style="padding:8px 12px;border-radius:var(--radius-sm);background:var(--bg-tertiary);
                 color:var(--text-primary);font-size:14px;border:1px solid var(--border);">
           <option value="">全部博主</option>
         </select>
-        <select id="videoStatusFilter" onchange="loadVideos()"
+        <select id="videoStatusFilter" onchange="resetVideoPage()"
                 style="padding:8px 12px;border-radius:var(--radius-sm);background:var(--bg-tertiary);
                 color:var(--text-primary);font-size:14px;border:1px solid var(--border);">
           <option value="">全部状态</option>
@@ -325,9 +357,15 @@
           <option value="analyzed">已分析</option>
           <option value="no_store">未识别到店铺</option>
         </select>
+        <input id="videoSearchInput" type="search" placeholder="搜索标题 / BV / 博主..."
+               oninput="debouncedVideoSearch()" onkeydown="if(event.key==='Enter'){resetVideoPage()}"
+               style="flex:1;min-width:220px;padding:8px 12px;border-radius:var(--radius-sm);background:var(--bg-tertiary);
+               color:var(--text-primary);font-size:14px;border:1px solid var(--border);">
+        <button class="btn btn-danger btn-sm" onclick="deleteSelectedVideos()">批量删除</button>
         <button class="btn btn-secondary btn-sm" onclick="loadVideos()">🔄 刷新</button>
       </div>
       <div id="videoList">加载中...</div>
+      <div id="videoPagination"></div>
     </div>
 
     <!-- ===== AI分析 ===== -->
@@ -349,8 +387,18 @@
       <div class="info-card">
         <h3>店铺坐标管理</h3>
         <p>对于没有坐标或坐标不准确的店铺，可以手动修改坐标，或重新地理编码。</p>
+        <input id="storeSearchInput" type="search" placeholder="搜索店名 / 地址 / 分类 / 博主 / 菜品..."
+               oninput="debouncedStoreSearch()"
+               style="margin-top:14px;width:100%;padding:10px 14px;border-radius:var(--radius-sm);background:var(--bg-tertiary);
+               color:var(--text-primary);font-size:14px;border:1px solid var(--border);">
+        <div style="display:flex;gap:10px;margin-top:12px;align-items:center;">
+          <button class="btn btn-secondary btn-sm" onclick="toggleStoreChecks(true)">全选当前页</button>
+          <button class="btn btn-secondary btn-sm" onclick="toggleStoreChecks(false)">取消选择</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteSelectedStores()">批量删除</button>
+        </div>
       </div>
       <div id="storeManageList">加载中...</div>
+      <div id="storePagination"></div>
     </div>
 
   </div>
@@ -359,6 +407,12 @@
 
   <script src="js/api.js"></script>
   <script>
+    const videoPager = { page: 1, pageSize: 20, total: 0 };
+    const storePager = { page: 1, pageSize: 20, total: 0 };
+    let videoSearchTimer = null;
+    let storeSearchTimer = null;
+    initProgressDrag();
+
     // ==================== 标签页切换 ====================
     function switchTab(name) {
       const labels = {bloggers:'博主',videos:'视频',analyze:'AI',stores:'店铺'};
@@ -376,6 +430,62 @@
       const el = document.getElementById('adminToast');
       el.textContent = msg; el.className = 'toast-admin ' + (type || '') + ' show';
       clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 2500);
+    }
+
+    function clampPage(page, total, pageSize) {
+      const totalPages = Math.max(1, Math.ceil((total || 0) / pageSize));
+      return Math.min(Math.max(1, page), totalPages);
+    }
+
+    function renderPagination(containerId, pager, onPageFn, onSizeFn) {
+      const el = document.getElementById(containerId);
+      if (!el) return;
+      const total = Number(pager.total || 0);
+      if (!total) { el.innerHTML = ''; return; }
+      const totalPages = Math.max(1, Math.ceil(total / pager.pageSize));
+      const start = (pager.page - 1) * pager.pageSize + 1;
+      const end = Math.min(total, pager.page * pager.pageSize);
+      el.innerHTML = `
+        <div class="pagination-bar">
+          <div class="pagination-info">显示 ${start}-${end} / 共 ${total} 条，第 ${pager.page} / ${totalPages} 页</div>
+          <div class="pagination-actions">
+            <select class="page-size-select" onchange="${onSizeFn}(this.value)">
+              ${[20, 50, 100].map(size => `<option value="${size}" ${pager.pageSize === size ? 'selected' : ''}>每页 ${size}</option>`).join('')}
+            </select>
+            <button class="btn btn-secondary btn-xs" ${pager.page <= 1 ? 'disabled' : ''} onclick="${onPageFn}(${pager.page - 1})">上一页</button>
+            <button class="btn btn-secondary btn-xs" ${pager.page >= totalPages ? 'disabled' : ''} onclick="${onPageFn}(${pager.page + 1})">下一页</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function debouncedVideoSearch() {
+      clearTimeout(videoSearchTimer);
+      videoSearchTimer = setTimeout(resetVideoPage, 250);
+    }
+
+    function debouncedStoreSearch() {
+      clearTimeout(storeSearchTimer);
+      storeSearchTimer = setTimeout(() => {
+        storePager.page = 1;
+        loadStoreManage();
+      }, 250);
+    }
+
+    function matchesStoreSearch(store, keyword) {
+      const q = String(keyword || '').trim().toLowerCase();
+      if (!q) return true;
+      const values = [
+        store.name,
+        store.address,
+        store.category,
+        store.blogger_name,
+        store.source_video_title,
+        store.note,
+        ...(Array.isArray(store.recommend_dishes) ? store.recommend_dishes : []),
+        ...(Array.isArray(store.tags) ? store.tags : [])
+      ];
+      return values.filter(Boolean).join(' ').toLowerCase().includes(q);
     }
 
     // ==================== 博主管理 ====================
@@ -545,21 +655,55 @@
     }
 
     // ==================== 视频管理 ====================
+    function resetVideoPage() {
+      videoPager.page = 1;
+      loadVideos();
+    }
+
+    function changeVideoPage(page) {
+      videoPager.page = page;
+      loadVideos();
+    }
+
+    function changeVideoPageSize(value) {
+      videoPager.pageSize = parseInt(value, 10) || 20;
+      videoPager.page = 1;
+      loadVideos();
+    }
+
     async function loadVideos() {
       const list = document.getElementById('videoList');
       list.innerHTML = '<span class="loading-inline"></span> 加载中...';
       try {
-        const params = {};
+        const params = {
+          include_total: 1,
+          limit: videoPager.pageSize,
+          offset: (videoPager.page - 1) * videoPager.pageSize
+        };
         const bid = document.getElementById('videoBloggerFilter').value;
         const st = document.getElementById('videoStatusFilter').value;
+        const q = document.getElementById('videoSearchInput').value.trim();
         if (bid) params.blogger_id = bid;
         if (st) params.status = st;
-        const videos = await API.getVideos(params);
-        if (!videos.length) { list.innerHTML = '<p style="color:var(--text-muted);padding:20px;">暂无视频，请先添加博主并拉取视频。</p>'; return; }
+        if (q) params.q = q;
+        const pageData = await API.getVideos(params);
+        const videos = pageData.items || [];
+        videoPager.total = pageData.total || 0;
+        const fixedPage = clampPage(videoPager.page, videoPager.total, videoPager.pageSize);
+        if (fixedPage !== videoPager.page) {
+          videoPager.page = fixedPage;
+          return loadVideos();
+        }
+        renderPagination('videoPagination', videoPager, 'changeVideoPage', 'changeVideoPageSize');
+        if (!videos.length) {
+          list.innerHTML = '<p style="color:var(--text-muted);padding:20px;">当前筛选条件下暂无视频。</p>';
+          return;
+        }
 
         const grouped = groupItemsByCity(videos);
         list.innerHTML = renderCityGroups(grouped, videosInCity => `<div class="table-wrap"><table class="video-table">
           <thead><tr>
+            <th style="width:36px;"><input type="checkbox" onchange="toggleVideoChecks(this.checked)"></th>
             <th class="col-title">标题</th>
             <th class="col-blogger">博主</th>
             <th class="col-date">日期</th>
@@ -569,13 +713,14 @@
           </tr></thead>
           <tbody>${videosInCity.map(v => `
             <tr>
+              <td><input type="checkbox" class="video-row-checkbox" value="${v.id}"></td>
               <td class="video-title-cell" title="${v.title}">
                 <a href="${v.url}" target="_blank" style="color:var(--text-primary);">${v.title}</a>
               </td>
               <td class="video-blogger-cell" title="${v.blogger_name || '-'}">${v.blogger_name || '-'}</td>
               <td class="video-date-cell">${v.publish_date || '-'}</td>
               <td class="video-play-cell">${v.play_count || '-'}</td>
-              <td><span class="badge badge-${v.status}">${statusLabel(v.status)}</span></td>
+              <td><span class="badge badge-${v.status}">${statusLabel(v.status)}</span><div style="font-size:11px;color:var(--text-muted);margin-top:4px;">店铺 ${v.active_store_count || 0}</div></td>
               <td class="video-actions-cell">
                 ${v.status === 'new' ? `<button class="btn btn-primary btn-xs" onclick="analyzeVideo(${v.id})">🤖 分析</button>` : ''}
                 <button class="btn btn-danger btn-xs" onclick="deleteVideo(${v.id}, '${v.title.replace(/'/g, "\\'")}')">🗑️</button>
@@ -593,35 +738,36 @@
       return { new: '待分析', analyzed: '已分析', no_store: '无店铺', skipped: '已跳过' }[s] || s;
     }
 
+    function toggleVideoChecks(checked) {
+      document.querySelectorAll('.video-row-checkbox').forEach(cb => cb.checked = checked);
+    }
+
+    async function deleteSelectedVideos() {
+      const ids = [...document.querySelectorAll('.video-row-checkbox:checked')].map(cb => parseInt(cb.value, 10)).filter(Boolean);
+      if (!ids.length) return toast('请先选择要删除的视频', 'error');
+      if (!confirm(`确定删除选中的 ${ids.length} 个视频？相关分析记录也会一起删除。`)) return;
+      try {
+        const result = await API.deleteVideosBatch(ids);
+        toast(result.message || `已删除 ${ids.length} 个视频`, 'success');
+        loadVideos();
+        loadAnalyzeList();
+        loadStats();
+        if (document.getElementById('panel-stores').classList.contains('active')) loadStoreManage();
+      } catch (e) {
+        toast('批量删除视频失败: ' + e.message, 'error');
+      }
+    }
+
     /**
-     * 分析单个视频 — 流式获取步骤级进度
+     * 分析单个视频 — 后台异步执行，前端轮询进度
      */
     async function analyzeVideo(vid) {
-      // 进度条显示 9 个步骤
-      showAnalyzeProgress(true, 9);
-      document.getElementById('progressText').textContent = '0 / 9 步';
-      document.getElementById('progressCurrent').textContent = '准备分析...';
-
       try {
-        const result = await API.analyzeVideoStream(vid, (p) => {
-          updateProgress(p.step, p.total);
-          document.getElementById('progressText').textContent = p.step + ' / ' + p.total + ' 步';
-          document.getElementById('progressCurrent').textContent = p.name;
-        });
-
-        showAnalyzeProgress(false);
-        const msg = `分析完成，识别到 ${result.stores_found} 家店铺`;
-        toast(msg, 'success');
-        loadVideos();
-        // 如果当前在店铺管理标签页，也刷新店铺列表
-        if (document.getElementById('panel-stores').classList.contains('active')) {
-          loadStoreManage();
-        }
-        // 通知地图刷新
-        if (window.opener && window.opener.APP) window.opener.APP.refreshData();
+        const job = await API.createAnalysisJob([vid]);
+        toast('分析任务已提交，可继续使用其他功能', 'success');
+        monitorAnalysisJob(job.id);
       } catch (e) {
-        showAnalyzeProgress(false);
-        toast('分析失败: ' + e.message, 'error');
+        toast('提交分析失败: ' + e.message, 'error');
       }
     }
 
@@ -661,65 +807,149 @@
     }
 
     /**
-     * 批量分析 — 逐个流式分析，进度条显示视频级进度 + 当前视频步骤详情
+     * 批量分析 — 后台异步执行，前端轮询进度
      */
     async function batchAnalyze() {
       const ids = [...document.querySelectorAll('.analyze-checkbox:checked')].map(cb => parseInt(cb.value));
       if (!ids.length) return toast('请先选择视频', 'error');
 
-      showAnalyzeProgress(true, ids.length);
-      document.getElementById('progressText').textContent = '0 / ' + ids.length + ' 个视频';
-      document.getElementById('progressCurrent').textContent = '开始批量分析...';
-
-      let done = 0;
-      for (const vid of ids) {
-        updateProgress(done, ids.length);
-        document.getElementById('progressText').textContent = done + ' / ' + ids.length + ' 个视频';
-
-        try {
-          await API.analyzeVideoStream(vid, (p) => {
-            document.getElementById('progressCurrent').textContent =
-              `视频 #${vid} — ${p.name} (${p.step}/${p.total})`;
-          });
-          done++;
-        } catch (e) {
-          // 跳过失败的视频，继续下一个
-          done++;
-          document.getElementById('progressCurrent').textContent =
-            `视频 #${vid} — ⚠️ 失败 (${e.message.slice(0, 40)})`;
-          await new Promise(r => setTimeout(r, 800)); // 让用户看到错误
-        }
+      try {
+        const job = await API.createAnalysisJob(ids);
+        toast(`已提交 ${ids.length} 个视频分析任务，可继续使用其他功能`, 'success');
+        monitorAnalysisJob(job.id);
+      } catch (e) {
+        toast('提交批量分析失败: ' + e.message, 'error');
       }
+    }
 
-      updateProgress(done, ids.length);
-      document.getElementById('progressText').textContent = done + ' / ' + ids.length + ' 个视频';
-      document.getElementById('progressCurrent').textContent = '分析完成！';
-      setTimeout(() => { showAnalyzeProgress(false); loadAnalyzeList(); loadVideos(); }, 1500);
+    let activeAnalysisPollTimer = null;
+
+    function monitorAnalysisJob(jobId) {
+      if (activeAnalysisPollTimer) {
+        clearTimeout(activeAnalysisPollTimer);
+        activeAnalysisPollTimer = null;
+      }
+      showAnalyzeProgress(true, 100);
+      document.getElementById('progressCurrent').textContent = '后台分析任务已提交...';
+      pollAnalysisJob(jobId);
+    }
+
+    async function pollAnalysisJob(jobId) {
+      try {
+        const job = await API.getAnalysisJob(jobId);
+        renderAnalysisJobProgress(job);
+
+        if (job.status === 'queued' || job.status === 'running') {
+          activeAnalysisPollTimer = setTimeout(() => pollAnalysisJob(jobId), 1000);
+          return;
+        }
+
+        activeAnalysisPollTimer = null;
+        const success = (job.results || []).filter(item => item.success).length;
+        const total = job.total_videos || (job.results || []).length || 0;
+        document.getElementById('progressCurrent').textContent = `分析完成：${success}/${total} 成功`;
+        toast(`分析完成：${success}/${total} 成功`, success ? 'success' : 'error');
+        refreshAfterAnalysisJob();
+        setTimeout(() => showAnalyzeProgress(false), 1800);
+      } catch (e) {
+        activeAnalysisPollTimer = null;
+        showAnalyzeProgress(false);
+        toast('获取分析进度失败: ' + e.message, 'error');
+      }
+    }
+
+    function renderAnalysisJobProgress(job) {
+      const totalVideos = Math.max(Number(job.total_videos || 1), 1);
+      const currentIndex = Math.max(Number(job.current_index || 0), 0);
+      const step = Math.max(Number(job.step || 0), 0);
+      const totalSteps = Math.max(Number(job.total_steps || 9), 1);
+      const completedVideos = Math.max(currentIndex - (job.status === 'running' ? 1 : 0), 0);
+      const percent = Math.min(100, Math.round(((completedVideos + step / totalSteps) / totalVideos) * 100));
+      document.getElementById('progressBarFill').style.width = percent + '%';
+      document.getElementById('progressText').textContent =
+        totalVideos === 1
+          ? `${step} / ${totalSteps} 步`
+          : `${currentIndex || 0} / ${totalVideos} 个视频 · ${step}/${totalSteps} 步`;
+      document.getElementById('progressCurrent').textContent = job.current || '后台分析中...';
+    }
+
+    function refreshAfterAnalysisJob() {
+      loadAnalyzeList();
+      loadVideos();
+      loadStats();
+      if (document.getElementById('panel-stores').classList.contains('active')) {
+        loadStoreManage();
+      }
+      if (window.opener && window.opener.APP) window.opener.APP.refreshData();
     }
 
     // ==================== 店铺管理 ====================
+    function changeStorePage(page) {
+      storePager.page = page;
+      loadStoreManage();
+    }
+
+    function changeStorePageSize(value) {
+      storePager.pageSize = parseInt(value, 10) || 20;
+      storePager.page = 1;
+      loadStoreManage();
+    }
+
+    function toggleStoreChecks(checked) {
+      document.querySelectorAll('.store-row-checkbox').forEach(cb => cb.checked = checked);
+    }
+
+    async function deleteSelectedStores() {
+      const ids = [...document.querySelectorAll('.store-row-checkbox:checked')].map(cb => parseInt(cb.value, 10)).filter(Boolean);
+      if (!ids.length) return toast('请先选择要删除的店铺', 'error');
+      if (!confirm(`确定删除选中的 ${ids.length} 家店铺？`)) return;
+      try {
+        const result = await API.deleteStoresBatch(ids);
+        toast(result.message || `已删除 ${ids.length} 家店铺`, 'success');
+        loadStoreManage();
+        loadVideos();
+        loadAnalyzeList();
+        loadStats();
+      } catch (e) {
+        toast('批量删除店铺失败: ' + e.message, 'error');
+      }
+    }
+
     async function loadStoreManage() {
       const list = document.getElementById('storeManageList');
       list.innerHTML = '<span class="loading-inline"></span> 加载中...';
       try {
         const stores = await API.getStores();
-        if (!stores.length) {
-          list.innerHTML = '<p style="color:var(--text-muted);padding:20px;">暂无店铺数据。</p>';
+        const q = document.getElementById('storeSearchInput').value.trim();
+        const matchedStores = stores.filter(store => matchesStoreSearch(store, q));
+        storePager.total = matchedStores.length;
+        storePager.page = clampPage(storePager.page, storePager.total, storePager.pageSize);
+        renderPagination('storePagination', storePager, 'changeStorePage', 'changeStorePageSize');
+        if (!matchedStores.length) {
+          list.innerHTML = '<p style="color:var(--text-muted);padding:20px;">当前搜索条件下暂无店铺。</p>';
           return;
         }
-        const grouped = groupItemsByCity(stores);
+        const start = (storePager.page - 1) * storePager.pageSize;
+        const pageStores = matchedStores.slice(start, start + storePager.pageSize);
+        const grouped = groupItemsByCity(pageStores);
         list.innerHTML = renderCityGroups(grouped, items => items.map(renderStoreManageItem).join(''), '家');
       } catch (e) { list.innerHTML = '<p style="color:#ef4444;">加载失败: ' + e.message + '</p>'; }
     }
 
     function renderStoreManageItem(s) {
           const noCoords = !s.lat || !s.lng || (s.lat === 0 && s.lng === 0);
+          const bloggerName = s.blogger_name || '未知博主';
+          const sourceTitle = s.source_video_title || '未知视频';
           return `
           <div style="display:flex;align-items:center;gap:10px;padding:10px;border:1px solid var(--border);
             border-radius:var(--radius-sm);margin-bottom:6px;background:var(--bg-tertiary);flex-wrap:wrap;">
+            <input type="checkbox" class="store-row-checkbox" value="${s.id}">
             <div style="flex:1;min-width:180px;">
-              <div style="font-weight:600;color:var(--text-primary);font-size:14px;">${s.name}</div>
-              <div style="font-size:11px;color:var(--text-muted);">${s.address || '无地址'} · ${s.category || '未知'}</div>
+              <div style="font-weight:600;color:var(--text-primary);font-size:14px;">${escapeHtml(s.name || '')}</div>
+              <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(s.address || '无地址')} · ${escapeHtml(s.category || '未知')}</div>
+              <div title="${escapeHtml(bloggerName + ' · ' + sourceTitle)}" style="font-size:11px;color:var(--text-secondary);margin-top:3px;max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                探店博主：${escapeHtml(bloggerName)} · ${escapeHtml(sourceTitle)}
+              </div>
             </div>
             <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:${noCoords ? '#ef4444' : '#22c55e'};">
               📍 ${noCoords ? '无坐标' : `${s.lat.toFixed(4)}, ${s.lng.toFixed(4)}`}
@@ -807,15 +1037,19 @@
   async function deleteStore(id) {
       if (!confirm("确定删除该店铺？此操作不可撤销。")) return;
       try {
-        await API.deleteStore(id);
-        toast('店铺已删除', 'success');
+        const result = await API.deleteStore(id);
+        toast(result.message || '店铺已删除', 'success');
         loadStoreManage();
+        loadVideos();
+        loadAnalyzeList();
+        loadStats();
       } catch (e) { toast('删除失败: ' + e.message, 'error'); }
     }
 
       function showAnalyzeProgress(show, total) {
       var modal = document.getElementById('analyzeProgressModal');
       if (show) { modal.classList.remove('hidden');
+        restoreProgressPosition();
         document.getElementById('progressBarFill').style.width = '0%';
         document.getElementById('progressText').textContent = '0 / ' + total; }
       else { modal.classList.add('hidden'); }
@@ -823,6 +1057,121 @@
     function updateProgress(done, total) {
       document.getElementById('progressBarFill').style.width = Math.round(done/total*100) + '%';
       document.getElementById('progressText').textContent = done + ' / ' + total;
+    }
+
+    function initProgressDrag() {
+      setTimeout(function() {
+        var modal = document.getElementById('analyzeProgressModal');
+        var handle = document.getElementById('progressDragHandle');
+        if (!modal || !handle || handle._dragBound) return;
+        handle._dragBound = true;
+
+        var dragging = false;
+        var offsetX = 0;
+        var offsetY = 0;
+
+        function point(event) {
+          var source = event.touches && event.touches[0] ? event.touches[0] : event;
+          return { x: source.clientX, y: source.clientY };
+        }
+
+        function start(event) {
+          var p = point(event);
+          var rect = modal.getBoundingClientRect();
+          dragging = true;
+          offsetX = p.x - rect.left;
+          offsetY = p.y - rect.top;
+          modal.style.right = 'auto';
+          modal.style.bottom = 'auto';
+          modal.style.left = rect.left + 'px';
+          modal.style.top = rect.top + 'px';
+          document.addEventListener('mousemove', move);
+          document.addEventListener('mouseup', end);
+          document.addEventListener('touchmove', move, { passive: false });
+          document.addEventListener('touchend', end);
+          event.preventDefault();
+        }
+
+        function move(event) {
+          if (!dragging) return;
+          var p = point(event);
+          var rect = modal.getBoundingClientRect();
+          var left = Math.min(Math.max(12, p.x - offsetX), window.innerWidth - rect.width - 12);
+          var top = Math.min(Math.max(12, p.y - offsetY), window.innerHeight - rect.height - 12);
+          modal.style.left = left + 'px';
+          modal.style.top = top + 'px';
+          if (event.cancelable) event.preventDefault();
+        }
+
+        function end() {
+          if (!dragging) return;
+          dragging = false;
+          localStorage.setItem('analysisProgressPosition', JSON.stringify({
+            left: parseFloat(modal.style.left) || 0,
+            top: parseFloat(modal.style.top) || 0
+          }));
+          document.removeEventListener('mousemove', move);
+          document.removeEventListener('mouseup', end);
+          document.removeEventListener('touchmove', move);
+          document.removeEventListener('touchend', end);
+        }
+
+        handle.addEventListener('mousedown', start);
+        handle.addEventListener('touchstart', start, { passive: false });
+        restoreProgressPosition();
+      }, 0);
+    }
+
+    function restoreProgressPosition() {
+      var modal = document.getElementById('analyzeProgressModal');
+      if (!modal) return;
+      try {
+        var saved = JSON.parse(localStorage.getItem('analysisProgressPosition') || 'null');
+        if (!saved) return;
+        var rect = modal.getBoundingClientRect();
+        var left = Math.min(Math.max(12, Number(saved.left) || 12), window.innerWidth - rect.width - 12);
+        var top = Math.min(Math.max(12, Number(saved.top) || 12), window.innerHeight - rect.height - 12);
+        modal.style.right = 'auto';
+        modal.style.bottom = 'auto';
+        modal.style.left = left + 'px';
+        modal.style.top = top + 'px';
+      } catch (e) {}
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function formatDuration(ms) {
+      var value = Number(ms || 0);
+      if (!value) return '-';
+      if (value < 1000) return value + 'ms';
+      return (value / 1000).toFixed(value < 10000 ? 1 : 0) + 's';
+    }
+
+    function renderAnalysisSteps(steps) {
+      if (!steps || !steps.length) {
+        return '<p style="color:var(--text-muted);font-size:13px;">暂无过程记录，重新分析后会生成步骤时间线。</p>';
+      }
+      var statusLabel = { running: '进行中', success: '成功', failed: '失败' };
+      return '<div class="analysis-steps">' + steps.map(function(step) {
+        var status = step.status || 'running';
+        var input = step.input_summary ? '<div class="analysis-step-summary"><b>输入：</b>' + escapeHtml(step.input_summary) + '</div>' : '';
+        var output = step.output_summary ? '<div class="analysis-step-summary"><b>输出：</b>' + escapeHtml(step.output_summary) + '</div>' : '';
+        var error = step.error_message ? '<div class="analysis-step-error">' + escapeHtml(step.error_message) + '</div>' : '';
+        return '<div class="analysis-step ' + escapeHtml(status) + '">'
+          + '<span class="analysis-step-dot"></span>'
+          + '<div class="analysis-step-head"><span class="analysis-step-name">' + escapeHtml(step.step_name || '') + '</span>'
+          + '<span class="analysis-step-time">' + formatDuration(step.duration_ms) + '</span></div>'
+          + '<div class="analysis-step-status">' + escapeHtml(statusLabel[status] || status) + '</div>'
+          + input + output + error
+          + '</div>';
+      }).join('') + '</div>';
     }
 
     async function showAnalysisDetail(videoId) {
@@ -838,6 +1187,7 @@
         var data = result.data;
         var log = data.log;
         var video = data.video;
+        var steps = data.steps || [];
         if (!log) { body.innerHTML = '<p style="color:var(--text-muted);padding:20px;">(该视频尚未进行AI分析)</p>'; return; }
         var rawDisplay = '';
         try { rawDisplay = JSON.stringify(JSON.parse(log.raw_response || '{}'), null, 2); }
@@ -851,24 +1201,25 @@
             sc++;
             var dishes = '';
             if (s.recommend_dishes && s.recommend_dishes.length) {
-              dishes = '<div class="store-dishes">' + s.recommend_dishes.map(function(d){return '<span class="store-dish-tag">'+d+'</span>';}).join('') + '</div>';
+              dishes = '<div class="store-dishes">' + s.recommend_dishes.map(function(d){return '<span class="store-dish-tag">'+escapeHtml(d)+'</span>';}).join('') + '</div>';
             }
             var star = s.rating ? '(★)'+s.rating : '';
-            storesHtml += '<div class="analysis-store-item"><div class="store-title">'+sc+'. '+(s.name||'')+' '+star+'</div>'
-              + '<div class="store-meta">'+(s.category||'')+' | '+(s.address||'(无地址)')+' | (¥)'+(s.avg_price||'-')+'/(人)</div>'
+            storesHtml += '<div class="analysis-store-item"><div class="store-title">'+sc+'. '+escapeHtml(s.name||'')+' '+escapeHtml(star)+'</div>'
+              + '<div class="store-meta">'+escapeHtml(s.category||'')+' | '+escapeHtml(s.address||'(无地址)')+' | (¥)'+escapeHtml(s.avg_price||'-')+'/(人)</div>'
               + dishes
-              + (s.note ? '<div style="font-size:12px;color:var(--text-secondary);margin-top:6px;font-style:italic;">“'+s.note+'”</div>' : '')
+              + (s.note ? '<div style="font-size:12px;color:var(--text-secondary);margin-top:6px;font-style:italic;">“'+escapeHtml(s.note)+'”</div>' : '')
               + '</div>';
           });
         } catch(e) {}
         if (!storesHtml) storesHtml = '<p style="color:var(--text-muted);font-size:13px;">(未提取到店铺数据)</p>';
         var statusBadge = log.success ? 'analyzed' : 'no-store';
         var statusText = log.success ? '✔ (分析成功)' : '✘ (分析失败)';
-        var errorMsg = log.error_message ? '<p style="font-size:12px;color:#ef4444;margin-top:6px;">'+log.error_message+'</p>' : '';
-        var rawSection = rawDisplay.length > 2 ? '<div class="analysis-section"><h4>(原始)LLM(响应)</h4><div class="analysis-raw">'+rawDisplay+'</div></div>' : '';
-        body.innerHTML = '<div class="analysis-section"><h4>(视频信息)</h4><p style="font-size:13px;color:var(--text-primary);margin-bottom:4px;">'+video.title+'</p><p style="font-size:12px;color:var(--text-muted);">'+(video.blogger_name||'')+' | '+(video.publish_date||'')+'</p></div>'
+        var errorMsg = log.error_message ? '<p style="font-size:12px;color:#ef4444;margin-top:6px;">'+escapeHtml(log.error_message)+'</p>' : '';
+        var rawSection = rawDisplay.length > 2 ? '<div class="analysis-section"><h4>(原始)LLM(响应)</h4><div class="analysis-raw">'+escapeHtml(rawDisplay)+'</div></div>' : '';
+        body.innerHTML = '<div class="analysis-section"><h4>(视频信息)</h4><p style="font-size:13px;color:var(--text-primary);margin-bottom:4px;">'+escapeHtml(video.title)+'</p><p style="font-size:12px;color:var(--text-muted);">'+escapeHtml(video.blogger_name||'')+' | '+escapeHtml(video.publish_date||'')+'</p></div>'
           + '<div class="analysis-section"><h4>\(状态\)</h4><span class="badge badge-'+statusBadge+'">'+statusText+'</span>'+errorMsg+'</div>'
-          + '<div class="analysis-section"><h4>\(模型与Token\)</h4><span class="analysis-token">\(模型:\) '+(log.model_name||'\(未知\)')+'</span><span class="analysis-token">\(提示:\) '+(log.prompt_tokens||0)+'</span><span class="analysis-token">\(生成:\) '+(log.completion_tokens||0)+'</span></div>'
+          + '<div class="analysis-section"><h4>\(模型与Token\)</h4><span class="analysis-token">\(模型:\) '+escapeHtml(log.model_name||'\(未知\)')+'</span><span class="analysis-token">\(提示:\) '+escapeHtml(log.prompt_tokens||0)+'</span><span class="analysis-token">\(生成:\) '+escapeHtml(log.completion_tokens||0)+'</span></div>'
+          + '<div class="analysis-section"><h4>分析过程</h4>'+renderAnalysisSteps(steps)+'</div>'
           + '<div class="analysis-section"><h4>\(提取的店铺\)</h4>'+storesHtml+'</div>'
           + rawSection;
       } catch(e) { body.innerHTML = '<p style="color:#ef4444;">\(加载失败:\) '+e.message+'</p>'; }

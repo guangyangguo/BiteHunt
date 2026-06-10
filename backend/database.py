@@ -98,12 +98,35 @@ def init_db():
             FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
         );
 
+        -- AI分析步骤记录（用于后台可观测时间线）
+        CREATE TABLE IF NOT EXISTS analysis_steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            video_id INTEGER NOT NULL,
+            analysis_log_id INTEGER,
+            run_id TEXT DEFAULT '',
+            step_name TEXT NOT NULL,
+            status TEXT DEFAULT 'running',
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            ended_at TIMESTAMP,
+            duration_ms INTEGER DEFAULT 0,
+            input_summary TEXT DEFAULT '',
+            output_summary TEXT DEFAULT '',
+            error_message TEXT DEFAULT '',
+            metadata_json TEXT DEFAULT '{}',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE,
+            FOREIGN KEY (analysis_log_id) REFERENCES analysis_logs(id) ON DELETE SET NULL
+        );
+
         -- 索引
         CREATE INDEX IF NOT EXISTS idx_videos_blogger ON videos(blogger_id);
         CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status);
         CREATE INDEX IF NOT EXISTS idx_stores_category ON stores(category);
         CREATE INDEX IF NOT EXISTS idx_stores_source ON stores(source_video_id);
         CREATE INDEX IF NOT EXISTS idx_analysis_video ON analysis_logs(video_id);
+        CREATE INDEX IF NOT EXISTS idx_analysis_steps_video ON analysis_steps(video_id);
+        CREATE INDEX IF NOT EXISTS idx_analysis_steps_log ON analysis_steps(analysis_log_id);
+        CREATE INDEX IF NOT EXISTS idx_analysis_steps_run ON analysis_steps(run_id);
     ''')
 
     conn.commit()
@@ -186,9 +209,8 @@ def add_videos_batch(blogger_id, video_list):
     return added
 
 
-def get_videos(blogger_id=None, status=None, limit=50, offset=0):
-    conn = get_db()
-    query = "SELECT v.*, b.name as blogger_name FROM videos v JOIN bloggers b ON v.blogger_id=b.id WHERE 1=1"
+def _video_filters_sql(blogger_id=None, status=None, keyword=''):
+    query = " WHERE 1=1"
     params = []
     if blogger_id:
         query += " AND v.blogger_id=?"
@@ -196,11 +218,45 @@ def get_videos(blogger_id=None, status=None, limit=50, offset=0):
     if status:
         query += " AND v.status=?"
         params.append(status)
-    query += " ORDER BY v.publish_date DESC LIMIT ? OFFSET ?"
+    keyword = (keyword or '').strip()
+    if keyword:
+        like = f"%{keyword}%"
+        query += """ AND (
+            v.title LIKE ?
+            OR v.platform_video_id LIKE ?
+            OR v.publish_date LIKE ?
+            OR v.play_count LIKE ?
+            OR b.name LIKE ?
+        )"""
+        params.extend([like, like, like, like, like])
+    return query, params
+
+
+def get_videos(blogger_id=None, status=None, limit=50, offset=0, keyword=''):
+    conn = get_db()
+    query = """SELECT v.*,
+                      COALESCE(b.name, '未知博主') as blogger_name,
+                      COUNT(CASE WHEN s.status='active' THEN 1 END) as active_store_count
+               FROM videos v
+               LEFT JOIN bloggers b ON v.blogger_id=b.id
+               LEFT JOIN stores s ON s.source_video_id=v.id"""
+    where_sql, params = _video_filters_sql(blogger_id=blogger_id, status=status, keyword=keyword)
+    query += where_sql
+    query += " GROUP BY v.id ORDER BY v.publish_date DESC LIMIT ? OFFSET ?"
     params.extend([limit, offset])
     rows = conn.execute(query, params).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def count_videos(blogger_id=None, status=None, keyword=''):
+    conn = get_db()
+    query = "SELECT COUNT(*) FROM videos v LEFT JOIN bloggers b ON v.blogger_id=b.id"
+    where_sql, params = _video_filters_sql(blogger_id=blogger_id, status=status, keyword=keyword)
+    query += where_sql
+    total = conn.execute(query, params).fetchone()[0]
+    conn.close()
+    return total
 
 
 def get_video(video_id):
@@ -322,11 +378,79 @@ def delete_video(video_id):
     conn.close()
 
 
-def delete_store(store_id):
+def delete_videos_batch(video_ids):
+    ids = [int(v) for v in video_ids if str(v).isdigit()]
+    if not ids:
+        return 0
     conn = get_db()
-    conn.execute("UPDATE stores SET status='deleted' WHERE id=?", (store_id,))
+    placeholders = ','.join(['?'] * len(ids))
+    cursor = conn.execute(f"DELETE FROM videos WHERE id IN ({placeholders})", ids)
+    deleted = cursor.rowcount if cursor.rowcount is not None else 0
     conn.commit()
     conn.close()
+    return deleted
+
+
+def delete_store(store_id):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT source_video_id FROM stores WHERE id=? AND status='active'",
+        (store_id,)
+    ).fetchone()
+    source_video_id = row['source_video_id'] if row else None
+    conn.execute("UPDATE stores SET status='deleted' WHERE id=?", (store_id,))
+    active_store_count = None
+    if source_video_id:
+        active_store_count = conn.execute(
+            "SELECT COUNT(*) FROM stores WHERE source_video_id=? AND status='active'",
+            (source_video_id,)
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE videos SET status=? WHERE id=?",
+            ('analyzed' if active_store_count else 'no_store', source_video_id)
+        )
+    conn.commit()
+    conn.close()
+    return {
+        'source_video_id': source_video_id,
+        'active_store_count': active_store_count,
+    }
+
+
+def delete_stores_batch(store_ids):
+    ids = [int(v) for v in store_ids if str(v).isdigit()]
+    if not ids:
+        return {'deleted': 0, 'updated_videos': 0}
+
+    conn = get_db()
+    placeholders = ','.join(['?'] * len(ids))
+    rows = conn.execute(
+        f"SELECT DISTINCT source_video_id FROM stores WHERE id IN ({placeholders}) AND status='active'",
+        ids
+    ).fetchall()
+    source_video_ids = [row['source_video_id'] for row in rows if row['source_video_id']]
+
+    cursor = conn.execute(
+        f"UPDATE stores SET status='deleted' WHERE id IN ({placeholders}) AND status='active'",
+        ids
+    )
+    deleted = cursor.rowcount if cursor.rowcount is not None else 0
+
+    updated_videos = 0
+    for video_id in source_video_ids:
+        active_store_count = conn.execute(
+            "SELECT COUNT(*) FROM stores WHERE source_video_id=? AND status='active'",
+            (video_id,)
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE videos SET status=? WHERE id=?",
+            ('analyzed' if active_store_count else 'no_store', video_id)
+        )
+        updated_videos += 1
+
+    conn.commit()
+    conn.close()
+    return {'deleted': deleted, 'updated_videos': updated_videos}
 
 
 # ==================== Analysis Log ====================
@@ -335,7 +459,7 @@ def add_analysis_log(video_id, model_name, raw_response, extracted_data,
                       store_ids, success, error_message='',
                       prompt_tokens=0, completion_tokens=0):
     conn = get_db()
-    conn.execute(
+    cursor = conn.execute(
         """INSERT INTO analysis_logs
            (video_id, model_name, prompt_tokens, completion_tokens,
             raw_response, extracted_data, store_ids, success, error_message)
@@ -349,7 +473,9 @@ def add_analysis_log(video_id, model_name, raw_response, extracted_data,
         )
     )
     conn.commit()
+    log_id = cursor.lastrowid
     conn.close()
+    return log_id
 
 
 def get_analysis_logs(video_id=None, limit=20):
@@ -360,6 +486,86 @@ def get_analysis_logs(video_id=None, limit=20):
         query += " WHERE video_id=?"
         params.append(video_id)
     query += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def _json_dumps(value):
+    return json.dumps(value or {}, ensure_ascii=False)
+
+
+def _merge_step_metadata(existing_json, metadata):
+    try:
+        existing = json.loads(existing_json or '{}')
+    except json.JSONDecodeError:
+        existing = {}
+    existing.update(metadata or {})
+    return _json_dumps(existing)
+
+
+def start_analysis_step(video_id, run_id, step_name, input_summary='', metadata=None):
+    conn = get_db()
+    cursor = conn.execute(
+        """INSERT INTO analysis_steps
+           (video_id, run_id, step_name, status, input_summary, metadata_json)
+           VALUES (?, ?, ?, 'running', ?, ?)""",
+        (video_id, run_id, step_name, input_summary or '', _json_dumps(metadata))
+    )
+    conn.commit()
+    step_id = cursor.lastrowid
+    conn.close()
+    return step_id
+
+
+def finish_analysis_step(step_id, status='success', output_summary='',
+                         error_message='', metadata=None, duration_ms=None):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT metadata_json FROM analysis_steps WHERE id=?",
+        (step_id,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        return
+    metadata_json = _merge_step_metadata(row['metadata_json'], metadata)
+    conn.execute(
+        """UPDATE analysis_steps
+           SET status=?,
+               ended_at=CURRENT_TIMESTAMP,
+               duration_ms=?,
+               output_summary=?,
+               error_message=?,
+               metadata_json=?
+           WHERE id=?""",
+        (status, int(duration_ms or 0), output_summary or '', error_message or '', metadata_json, step_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def attach_analysis_steps_to_log(run_id, analysis_log_id):
+    conn = get_db()
+    conn.execute(
+        "UPDATE analysis_steps SET analysis_log_id=? WHERE run_id=?",
+        (analysis_log_id, run_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_analysis_steps(video_id=None, analysis_log_id=None, limit=100):
+    conn = get_db()
+    query = "SELECT * FROM analysis_steps WHERE 1=1"
+    params = []
+    if video_id:
+        query += " AND video_id=?"
+        params.append(video_id)
+    if analysis_log_id:
+        query += " AND analysis_log_id=?"
+        params.append(analysis_log_id)
+    query += " ORDER BY id ASC LIMIT ?"
     params.append(limit)
     rows = conn.execute(query, params).fetchall()
     conn.close()

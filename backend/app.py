@@ -8,6 +8,8 @@ import os
 import sys
 import io
 import re
+import time
+import uuid
 
 # 修复 Windows 控制台编码问题
 if sys.platform == 'win32':
@@ -32,9 +34,11 @@ from database import (
     init_db, get_db,
     add_blogger, get_all_bloggers, get_blogger, delete_blogger,
     get_videos, get_video, update_video_status,
+    count_videos,
     add_videos_batch, delete_video,
-    get_all_stores, get_store, delete_store,
-    get_analysis_logs,
+    delete_videos_batch,
+    get_all_stores, get_store, delete_store, delete_stores_batch,
+    get_analysis_logs, get_analysis_steps,
     get_stats,
 )
 from services.bilibili import (
@@ -42,6 +46,8 @@ from services.bilibili import (
     fetch_user_recent_videos, resolve_user_input, BilibiliRiskControlError
 )
 from services.analyzer import analyze_video, batch_analyze
+from services.guide import guide_chat, guide_chat_events
+from services.recommender import recommend_for_query
 
 app = Flask(__name__, static_folder=os.path.join(project_dir, 'frontend'))
 app.config['JSON_AS_ASCII'] = False
@@ -49,6 +55,9 @@ app.config['JSON_AS_ASCII'] = False
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
 FRONTEND_DIR = os.path.join(project_dir, 'frontend')
+
+analysis_jobs = {}
+analysis_jobs_lock = threading.Lock()
 
 
 # ==================== 静态文件 ====================
@@ -89,6 +98,43 @@ def api_stats():
         return jsonify({'code': 0, 'data': stats})
     except Exception as e:
         return jsonify({'code': -1, 'error': str(e)}), 500
+
+
+# ==================== API: 用户占位 ====================
+
+def _placeholder_user_profile():
+    return {
+        'is_logged_in': False,
+        'nickname': '未登录用户',
+        'avatar': '',
+        'stats': {
+            'favorites': 0,
+            'visited': 0,
+            'guides': 0,
+        },
+        'features': {
+            'favorites': False,
+            'history': False,
+            'preferences': False,
+        },
+    }
+
+
+@app.route('/api/user/profile')
+def api_user_profile():
+    return jsonify({'code': 0, 'data': _placeholder_user_profile()})
+
+
+@app.route('/api/user/login', methods=['POST'])
+def api_user_login():
+    profile = _placeholder_user_profile()
+    profile['login_provider'] = (request.get_json(silent=True) or {}).get('provider', 'placeholder')
+    return jsonify({'code': 0, 'data': profile, 'message': '用户登录接口已预留'})
+
+
+@app.route('/api/user/logout', methods=['POST'])
+def api_user_logout():
+    return jsonify({'code': 0, 'data': _placeholder_user_profile(), 'message': '已退出占位登录态'})
 
 
 # ==================== API: 店铺 ====================
@@ -135,8 +181,87 @@ def api_store_detail(store_id):
 @app.route('/api/stores/<int:store_id>', methods=['DELETE'])
 def api_delete_store(store_id):
     try:
-        delete_store(store_id)
-        return jsonify({'code': 0, 'message': '已删除'})
+        result = delete_store(store_id)
+        message = '已删除'
+        if result.get('source_video_id') and result.get('active_store_count') == 0:
+            message = '店铺已删除；来源视频已标记为未识别到店铺，可重新分析'
+        return jsonify({'code': 0, 'data': result, 'message': message})
+    except Exception as e:
+        return jsonify({'code': -1, 'error': str(e)}), 500
+
+
+@app.route('/api/stores/batch-delete', methods=['POST'])
+def api_delete_stores_batch():
+    try:
+        data = request.get_json() or {}
+        store_ids = data.get('store_ids') or []
+        if not isinstance(store_ids, list) or not store_ids:
+            return jsonify({'code': -1, 'error': '请选择要删除的店铺'}), 400
+        result = delete_stores_batch(store_ids)
+        return jsonify({
+            'code': 0,
+            'data': result,
+            'message': f"已删除 {result.get('deleted', 0)} 家店铺",
+        })
+    except Exception as e:
+        return jsonify({'code': -1, 'error': str(e)}), 500
+
+
+# ==================== API: AI 向导 ====================
+
+@app.route('/api/guide/recommend', methods=['POST'])
+def api_guide_recommend():
+    try:
+        data = request.get_json() or {}
+        query = str(data.get('query', '')).strip()
+        if not query:
+            return jsonify({'code': -1, 'error': '请输入你的探店需求'}), 400
+
+        user_location = data.get('location') or None
+        stores = get_all_stores()
+        result = recommend_for_query(stores, query, user_location=user_location, limit=5)
+        return jsonify({'code': 0, 'data': result})
+    except Exception as e:
+        return jsonify({'code': -1, 'error': str(e)}), 500
+
+
+@app.route('/api/guide/chat', methods=['POST'])
+def api_guide_chat():
+    try:
+        data = request.get_json() or {}
+        messages = data.get('messages') or []
+        if not isinstance(messages, list):
+            return jsonify({'code': -1, 'error': 'messages 必须是数组'}), 400
+
+        user_location = data.get('location') or None
+        stores = get_all_stores()
+        result = guide_chat(stores, messages, user_location=user_location, limit=5)
+        return jsonify({'code': 0, 'data': result})
+    except Exception as e:
+        return jsonify({'code': -1, 'error': str(e)}), 500
+
+
+@app.route('/api/guide/chat/stream', methods=['POST'])
+def api_guide_chat_stream():
+    try:
+        data = request.get_json() or {}
+        messages = data.get('messages') or []
+        if not isinstance(messages, list):
+            return jsonify({'code': -1, 'error': 'messages 必须是数组'}), 400
+
+        user_location = data.get('location') or None
+        stores = get_all_stores()
+
+        def generate():
+            try:
+                for event in guide_chat_events(stores, messages, user_location=user_location, limit=5):
+                    yield json.dumps(event, ensure_ascii=False) + '\n'
+            except GeneratorExit:
+                return
+            except Exception as e:
+                yield json.dumps({'type': 'error', 'error': str(e)}, ensure_ascii=False) + '\n'
+
+        return Response(generate(), mimetype='application/x-ndjson')
     except Exception as e:
         return jsonify({'code': -1, 'error': str(e)}), 500
 
@@ -573,10 +698,31 @@ def api_videos():
     try:
         blogger_id = request.args.get('blogger_id', type=int)
         status = request.args.get('status')
+        keyword = request.args.get('q', '').strip()
         limit = request.args.get('limit', 50, type=int)
         offset = request.args.get('offset', 0, type=int)
+        include_total = request.args.get('include_total', '').lower() in ('1', 'true', 'yes')
+        limit = max(1, min(limit, 500))
+        offset = max(0, offset)
 
-        videos = get_videos(blogger_id=blogger_id, status=status, limit=limit, offset=offset)
+        videos = get_videos(
+            blogger_id=blogger_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+            keyword=keyword,
+        )
+        if include_total:
+            total = count_videos(blogger_id=blogger_id, status=status, keyword=keyword)
+            return jsonify({
+                'code': 0,
+                'data': {
+                    'items': videos,
+                    'total': total,
+                    'limit': limit,
+                    'offset': offset,
+                }
+            })
         return jsonify({'code': 0, 'data': videos})
     except Exception as e:
         return jsonify({'code': -1, 'error': str(e)}), 500
@@ -650,6 +796,138 @@ def api_analyze_video_stream(video_id):
                     headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 
+def _update_analysis_job(job_id, **updates):
+    with analysis_jobs_lock:
+        job = analysis_jobs.get(job_id)
+        if not job:
+            return
+        job.update(updates)
+        job['updated_at'] = time.time()
+
+
+def _run_analysis_job(job_id):
+    with analysis_jobs_lock:
+        job = analysis_jobs.get(job_id)
+        if not job:
+            return
+        video_ids = list(job.get('video_ids') or [])
+
+    results = []
+    total_videos = len(video_ids)
+    for index, vid in enumerate(video_ids, start=1):
+        _update_analysis_job(
+            job_id,
+            status='running',
+            current_video_id=vid,
+            current_index=index,
+            step=0,
+            total_steps=9,
+            current=f'开始分析视频 #{vid}',
+        )
+
+        def on_progress(step, total, name, current_vid=vid, current_index=index):
+            _update_analysis_job(
+                job_id,
+                current_video_id=current_vid,
+                current_index=current_index,
+                step=step,
+                total_steps=total,
+                current=name,
+            )
+
+        try:
+            result = analyze_video(vid, progress_callback=on_progress)
+            results.append({
+                'video_id': vid,
+                'success': result.get('success', False),
+                'stores_found': len(result.get('store_ids', [])),
+                'summary': result.get('summary', ''),
+                'error': result.get('error', ''),
+            })
+        except Exception as e:
+            results.append({
+                'video_id': vid,
+                'success': False,
+                'stores_found': 0,
+                'summary': '',
+                'error': str(e),
+            })
+
+        _update_analysis_job(job_id, results=results)
+
+    success_count = sum(1 for item in results if item.get('success'))
+    _update_analysis_job(
+        job_id,
+        status='success' if success_count == total_videos else 'failed',
+        current_video_id=None,
+        current_index=total_videos,
+        step=9,
+        total_steps=9,
+        current=f'分析完成：{success_count}/{total_videos} 成功',
+        completed_at=time.time(),
+        results=results,
+    )
+
+
+@app.route('/api/analysis-jobs', methods=['POST'])
+def api_create_analysis_job():
+    try:
+        data = request.get_json() or {}
+        video_ids = data.get('video_ids')
+        if video_ids is None and data.get('video_id'):
+            video_ids = [data.get('video_id')]
+        if not isinstance(video_ids, list):
+            return jsonify({'code': -1, 'error': '请提供 video_ids'}), 400
+
+        normalized_ids = []
+        for item in video_ids:
+            try:
+                vid = int(item)
+            except (TypeError, ValueError):
+                continue
+            if vid > 0 and vid not in normalized_ids:
+                normalized_ids.append(vid)
+        if not normalized_ids:
+            return jsonify({'code': -1, 'error': '请提供有效的视频ID'}), 400
+        if len(normalized_ids) > 50:
+            return jsonify({'code': -1, 'error': '单次最多提交 50 个视频'}), 400
+
+        job_id = uuid.uuid4().hex
+        now = time.time()
+        with analysis_jobs_lock:
+            analysis_jobs[job_id] = {
+                'id': job_id,
+                'status': 'queued',
+                'video_ids': normalized_ids,
+                'total_videos': len(normalized_ids),
+                'current_index': 0,
+                'current_video_id': None,
+                'step': 0,
+                'total_steps': 9,
+                'current': '任务已创建，等待开始',
+                'results': [],
+                'created_at': now,
+                'updated_at': now,
+            }
+
+        thread = threading.Thread(target=_run_analysis_job, args=(job_id,), daemon=True)
+        thread.start()
+        with analysis_jobs_lock:
+            job_snapshot = dict(analysis_jobs[job_id])
+        return jsonify({'code': 0, 'data': job_snapshot, 'message': '分析任务已提交'})
+    except Exception as e:
+        return jsonify({'code': -1, 'error': str(e)}), 500
+
+
+@app.route('/api/analysis-jobs/<job_id>')
+def api_get_analysis_job(job_id):
+    with analysis_jobs_lock:
+        job = analysis_jobs.get(job_id)
+        if not job:
+            return jsonify({'code': -1, 'error': '分析任务不存在或已过期'}), 404
+        return jsonify({'code': 0, 'data': dict(job)})
+
+
 @app.route('/api/videos/batch-analyze', methods=['POST'])
 def api_batch_analyze():
     """批量分析视频"""
@@ -687,6 +965,20 @@ def api_analysis_logs():
         return jsonify({'code': -1, 'error': str(e)}), 500
 
 
+@app.route('/api/videos/<int:video_id>/analysis/steps')
+def api_video_analysis_steps(video_id):
+    try:
+        analysis_log_id = request.args.get('analysis_log_id', type=int)
+        steps = get_analysis_steps(
+            video_id=video_id,
+            analysis_log_id=analysis_log_id,
+            limit=100,
+        )
+        return jsonify({'code': 0, 'data': steps})
+    except Exception as e:
+        return jsonify({'code': -1, 'error': str(e)}), 500
+
+
 # ==================== 健康检查 ====================
 
 @app.route('/api/videos/<int:video_id>', methods=['DELETE'])
@@ -701,6 +993,23 @@ def api_delete_video(video_id):
         return jsonify({'code': -1, 'error': str(e)}), 500
 
 
+@app.route('/api/videos/batch-delete', methods=['POST'])
+def api_delete_videos_batch():
+    try:
+        data = request.get_json() or {}
+        video_ids = data.get('video_ids') or []
+        if not isinstance(video_ids, list) or not video_ids:
+            return jsonify({'code': -1, 'error': '请选择要删除的视频'}), 400
+        deleted = delete_videos_batch(video_ids)
+        return jsonify({
+            'code': 0,
+            'data': {'deleted': deleted},
+            'message': f'已删除 {deleted} 个视频',
+        })
+    except Exception as e:
+        return jsonify({'code': -1, 'error': str(e)}), 500
+
+
 @app.route('/api/videos/<int:video_id>/analysis')
 def api_video_analysis(video_id):
     try:
@@ -708,11 +1017,18 @@ def api_video_analysis(video_id):
         video = get_video(video_id)
         if not video:
             return jsonify({'code': -1, 'error': '视频不存在'}), 404
+        log = logs[0] if logs else None
+        steps = get_analysis_steps(
+            video_id=video_id,
+            analysis_log_id=log['id'] if log else None,
+            limit=100,
+        ) if log else []
         return jsonify({
             'code': 0,
             'data': {
                 'video': video,
-                'log': logs[0] if logs else None,
+                'log': log,
+                'steps': steps,
             }
         })
     except Exception as e:

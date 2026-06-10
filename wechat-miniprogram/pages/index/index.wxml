@@ -12,7 +12,13 @@
     bindtap="onMapTap"
   />
 
-  <cover-view class="map-locate-btn {{locating ? 'loading' : ''}}" bindtap="locateUser">◎</cover-view>
+  <cover-view class="map-locate-btn {{locating ? 'loading' : ''}}" bindtap="locateUser">
+    <cover-view class="locate-glyph">
+      <cover-view class="locate-line vertical"></cover-view>
+      <cover-view class="locate-line horizontal"></cover-view>
+      <cover-view class="locate-dot"></cover-view>
+    </cover-view>
+  </cover-view>
 
   <view class="top-card">
     <view class="brand">⌖</view>
@@ -26,16 +32,12 @@
         bindinput="onSearchInput"
       />
     </view>
-  </view>
-
-  <view class="filter-card {{sheetExpanded || detailOpen ? 'hidden' : ''}}">
     <picker mode="selector" range="{{bloggerOptions}}" range-key="name" value="{{bloggerIndex}}" bindchange="onBloggerChange">
       <view class="filter-chip {{currentBlogger !== 'all' ? 'active' : ''}}">
-        <text class="filter-label">博主</text>
         <text class="filter-value">{{currentBloggerName}}</text>
       </view>
     </picker>
-    <button wx:if="{{searchActive}}" class="filter-clear" bindtap="clearSearchFilters">清空</button>
+    <view wx:if="{{searchActive}}" class="filter-clear" role="button" bindtap="clearSearchFilters">清空</view>
   </view>
 
   <scroll-view class="category-bar {{sheetExpanded || detailOpen ? 'hidden' : ''}}" scroll-x enhanced show-scrollbar="{{false}}">
@@ -61,7 +63,9 @@
         <view class="sheet-title">{{sheetTitle}}</view>
         <view class="sheet-subtitle">{{sheetSubtitle}}</view>
       </view>
-      <button class="sheet-toggle">{{sheetExpanded ? '⌄' : '⌃'}}</button>
+      <view class="sheet-toggle" role="button">
+        <view class="sheet-chevron {{sheetExpanded ? 'down' : 'up'}}"></view>
+      </view>
     </view>
 
     <scroll-view class="store-list" scroll-y enhanced show-scrollbar="{{false}}">
@@ -121,7 +125,10 @@
         <view class="section">
           <view class="section-title">地址</view>
           <view class="section-text">{{selectedStore.address || '地址待补充'}}</view>
-          <button wx:if="{{selectedStore.hasCoords}}" class="primary-btn" bindtap="focusSelectedStore">定位到地图</button>
+          <view wx:if="{{selectedStore.hasCoords}}" class="action-row">
+            <view class="primary-btn" role="button" bindtap="navigateToStore">导航到店</view>
+            <view class="secondary-btn" role="button" bindtap="focusSelectedStore">定位到地图</view>
+          </view>
         </view>
 
         <view wx:if="{{selectedStore.recommend_dishes.length}}" class="section">
@@ -149,7 +156,7 @@
           </view>
           <view wx:if="{{selectedStore.sourceVideoUrl}}" class="source-video">
             <view class="source-video-title">{{selectedStore.sourceVideoTitle}}</view>
-            <button class="source-video-btn" bindtap="copySourceVideo">复制 B 站视频链接</button>
+            <view class="source-video-btn" role="button" bindtap="copySourceVideo">复制 B 站视频链接</view>
           </view>
           <view wx:if="{{selectedStore.note}}" class="note">{{selectedStore.note}}</view>
         </view>

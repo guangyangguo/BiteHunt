@@ -53,6 +53,17 @@ const API = {
     return data;
   },
 
+  async deleteStoresBatch(storeIds) {
+    const resp = await fetch(`${API_BASE}/stores/batch-delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ store_ids: storeIds }),
+    });
+    const data = await resp.json();
+    if (data.code !== 0) throw new Error(data.error);
+    return data;
+  },
+
   async updateStore(storeId, updates) {
     const resp = await fetch(`${API_BASE}/stores/${storeId}`, {
       method: 'PUT',
@@ -224,6 +235,25 @@ const API = {
     return data;
   },
 
+  async createAnalysisJob(videoIds) {
+    const ids = Array.isArray(videoIds) ? videoIds : [videoIds];
+    const resp = await fetch(`${API_BASE}/analysis-jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video_ids: ids }),
+    });
+    const data = await resp.json();
+    if (data.code !== 0) throw new Error(data.error);
+    return data.data;
+  },
+
+  async getAnalysisJob(jobId) {
+    const resp = await fetch(`${API_BASE}/analysis-jobs/${encodeURIComponent(jobId)}`);
+    const data = await resp.json();
+    if (data.code !== 0) throw new Error(data.error);
+    return data.data;
+  },
+
   // ==================== 统计 ====================
 
   async getStats() {
@@ -235,6 +265,17 @@ const API = {
 
   async deleteVideo(videoId) {
     const resp = await fetch(`${API_BASE}/videos/${videoId}`, { method: 'DELETE' });
+    const data = await resp.json();
+    if (data.code !== 0) throw new Error(data.error);
+    return data;
+  },
+
+  async deleteVideosBatch(videoIds) {
+    const resp = await fetch(`${API_BASE}/videos/batch-delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video_ids: videoIds }),
+    });
     const data = await resp.json();
     if (data.code !== 0) throw new Error(data.error);
     return data;

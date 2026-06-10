@@ -1,0 +1,136 @@
+<view class="chat-page">
+  <view class="chat-header">
+    <view class="chat-title">探店 AI 向导</view>
+    <view class="chat-subtitle">基于真实探店视频分析结果推荐</view>
+  </view>
+
+  <scroll-view class="message-list" scroll-y enhanced scroll-into-view="{{scrollIntoView}}">
+    <block wx:for="{{messages}}" wx:key="id">
+      <view id="{{item.id}}" class="message-row {{item.role}}">
+        <view class="message-bubble">
+          <text wx:if="{{item.content}}">{{item.content}}</text>
+          <view wx:elif="{{item.thinking}}" class="thinking-dots">
+            <text></text>
+            <text></text>
+            <text></text>
+          </view>
+          <view wx:if="{{item.followUp}}" class="follow-up">{{item.followUp}}</view>
+          <scroll-view wx:if="{{item.recommendationsReady && item.recommendations && item.recommendations.length}}" class="recommend-scroll" scroll-x enhanced show-scrollbar="{{false}}">
+            <view class="recommend-track">
+              <view wx:for="{{item.recommendations}}" wx:for-item="store" wx:key="id" class="recommend-card">
+                <view class="recommend-main">
+                  <view class="recommend-name">{{store.name}}</view>
+                  <view class="recommend-rating">{{store.rating ? store.rating + '分' : '暂无评分'}}</view>
+                </view>
+                <view class="recommend-meta">
+                  <text>{{store.category || '未分类'}}</text>
+                  <text>¥{{store.avg_price || '-' }}/人</text>
+                  <text>{{store.blogger_name || '未知博主'}}</text>
+                </view>
+                <view class="recommend-reason">{{store.reason}}</view>
+                <view wx:if="{{store.recommend_dishes && store.recommend_dishes.length}}" class="recommend-tags">
+                  <text wx:for="{{store.recommend_dishes}}" wx:for-item="dish" wx:key="*this" class="recommend-tag">{{dish}}</text>
+                </view>
+                <button class="recommend-btn" data-id="{{store.id}}" bindtap="openStore">查看详情</button>
+              </view>
+            </view>
+          </scroll-view>
+        </view>
+      </view>
+    </block>
+  </scroll-view>
+
+  <view class="suggestion-panel">
+    <scroll-view scroll-x enhanced show-scrollbar="{{false}}">
+      <view class="suggestion-inner">
+        <button
+          wx:for="{{suggestions}}"
+          wx:key="*this"
+          class="suggestion-chip"
+          data-text="{{item}}"
+          bindtap="onSuggestionTap"
+        >
+          {{item}}
+        </button>
+      </view>
+    </scroll-view>
+  </view>
+
+  <view class="composer">
+    <input
+      class="composer-input"
+      value="{{inputValue}}"
+      placeholder="问问附近有什么值得吃..."
+      confirm-type="send"
+      bindinput="onInput"
+      bindconfirm="onSendTap"
+    />
+    <button class="send-btn {{sending ? 'stop' : ''}}" bindtap="onSendTap">{{sending ? '停止' : '发送'}}</button>
+  </view>
+
+  <view wx:if="{{detailOpen}}" class="detail-backdrop" bindtap="closeDetail"></view>
+  <view class="detail-panel {{detailOpen ? 'open' : ''}}">
+    <view wx:if="{{selectedStore}}" class="detail-content">
+      <view class="detail-handle"></view>
+      <view class="detail-header">
+        <view>
+          <view class="detail-name">{{selectedStore.name}}</view>
+          <view class="detail-category">{{selectedStore.category || '未分类'}}</view>
+        </view>
+        <button class="detail-close" bindtap="closeDetail">×</button>
+      </view>
+
+      <scroll-view class="detail-body" scroll-y enhanced show-scrollbar="{{false}}">
+        <view class="detail-grid">
+          <view class="info-box">
+            <text class="label">评分</text>
+            <text class="value rating-badge {{selectedStore.ratingClass}}">{{selectedStore.ratingLabel}}</text>
+          </view>
+          <view class="info-box">
+            <text class="label">人均</text>
+            <text class="value">¥{{selectedStore.avg_price || '-'}}</text>
+          </view>
+        </view>
+
+        <view class="section">
+          <view class="section-title">地址</view>
+          <view class="section-text">{{selectedStore.address || '地址待补充'}}</view>
+          <view wx:if="{{selectedStore.hasCoords}}" class="action-row">
+            <view class="primary-btn" role="button" bindtap="navigateToStore">导航到店</view>
+            <view class="secondary-btn" role="button" bindtap="focusSelectedStore">定位到地图</view>
+          </view>
+        </view>
+
+        <view wx:if="{{selectedStore.recommend_dishes.length}}" class="section">
+          <view class="section-title">推荐菜品</view>
+          <view class="tag-row">
+            <text wx:for="{{selectedStore.recommend_dishes}}" wx:key="*this" class="tag">{{item}}</text>
+          </view>
+        </view>
+
+        <view wx:if="{{selectedStore.tags.length}}" class="section">
+          <view class="section-title">标签</view>
+          <view class="tag-row">
+            <text wx:for="{{selectedStore.tags}}" wx:key="*this" class="tag subtle">{{item}}</text>
+          </view>
+        </view>
+
+        <view class="section">
+          <view class="section-title">探店来源</view>
+          <view class="source-box">
+            <view class="source-icon">🎥</view>
+            <view>
+              <view class="source-name">{{selectedStore.blogger_name || '未知博主'}}</view>
+              <view class="source-meta">来自视频分析记录</view>
+            </view>
+          </view>
+          <view wx:if="{{selectedStore.sourceVideoUrl}}" class="source-video">
+            <view class="source-video-title">{{selectedStore.sourceVideoTitle}}</view>
+            <view class="source-video-btn" role="button" bindtap="copySourceVideo">复制 B 站视频链接</view>
+          </view>
+          <view wx:if="{{selectedStore.note}}" class="note">{{selectedStore.note}}</view>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+</view>
