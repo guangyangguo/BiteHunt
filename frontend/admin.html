@@ -385,8 +385,8 @@
     <!-- ===== 店铺管理 ===== -->
     <div id="panel-stores" class="panel">
       <div class="info-card">
-        <h3>店铺坐标管理</h3>
-        <p>对于没有坐标或坐标不准确的店铺，可以手动修改坐标，或重新地理编码。</p>
+        <h3>店铺信息复核</h3>
+        <p>这里展示 AI 从视频中提取出的店铺信息，可对用户端会展示的内容进行人工修正。</p>
         <input id="storeSearchInput" type="search" placeholder="搜索店名 / 地址 / 分类 / 博主 / 菜品..."
                oninput="debouncedStoreSearch()"
                style="margin-top:14px;width:100%;padding:10px 14px;border-radius:var(--radius-sm);background:var(--bg-tertiary);
@@ -401,6 +401,70 @@
       <div id="storePagination"></div>
     </div>
 
+  </div>
+
+  <div id="storeEditModal" class="analysis-backdrop" onclick="closeStoreEditModal()"></div>
+  <div id="storeEditPanel" class="analysis-detail-modal">
+    <div class="analysis-header">
+      <h3>编辑店铺信息</h3>
+      <button class="analysis-close" onclick="closeStoreEditModal()">×</button>
+    </div>
+    <div class="analysis-body">
+      <div class="form-group">
+        <label>店铺名称</label>
+        <input id="editStoreName" type="text">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>分类</label>
+          <input id="editStoreCategory" type="text">
+        </div>
+        <div class="form-group">
+          <label>人均价格</label>
+          <input id="editStoreAvgPrice" type="number" min="0" step="1">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>评分</label>
+          <input id="editStoreRating" type="number" min="0" max="5" step="0.1">
+        </div>
+        <div class="form-group">
+          <label>置信度</label>
+          <input id="editStoreConfidence" type="number" min="0" max="1" step="0.01">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>地址</label>
+        <input id="editStoreAddress" type="text">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>纬度</label>
+          <input id="editStoreLat" type="number" step="0.000001">
+        </div>
+        <div class="form-group">
+          <label>经度</label>
+          <input id="editStoreLng" type="number" step="0.000001">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>推荐菜品（用逗号或换行分隔）</label>
+        <textarea id="editStoreDishes" rows="3"></textarea>
+      </div>
+      <div class="form-group">
+        <label>标签（用逗号或换行分隔）</label>
+        <textarea id="editStoreTags" rows="3"></textarea>
+      </div>
+      <div class="form-group">
+        <label>推荐备注</label>
+        <textarea id="editStoreNote" rows="4"></textarea>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button class="btn btn-secondary" onclick="closeStoreEditModal()">取消</button>
+        <button class="btn btn-primary" onclick="saveStoreEdit()">保存修改</button>
+      </div>
+    </div>
   </div>
 
   <div class="toast-admin" id="adminToast"></div>
@@ -899,6 +963,8 @@
       document.querySelectorAll('.store-row-checkbox').forEach(cb => cb.checked = checked);
     }
 
+    let editingStoreId = null;
+
     async function deleteSelectedStores() {
       const ids = [...document.querySelectorAll('.store-row-checkbox:checked')].map(cb => parseInt(cb.value, 10)).filter(Boolean);
       if (!ids.length) return toast('请先选择要删除的店铺', 'error');
@@ -913,6 +979,85 @@
       } catch (e) {
         toast('批量删除店铺失败: ' + e.message, 'error');
       }
+    }
+
+    async function openStoreEditModal(storeId) {
+      editingStoreId = storeId;
+      document.getElementById('storeEditModal').classList.add('open');
+      document.getElementById('storeEditPanel').classList.add('open');
+      try {
+        const store = await API.getStoreDetail(storeId);
+        document.getElementById('editStoreName').value = store.name || '';
+        document.getElementById('editStoreCategory').value = store.category || '';
+        document.getElementById('editStoreAvgPrice').value = store.avg_price || '';
+        document.getElementById('editStoreRating').value = store.rating || '';
+        document.getElementById('editStoreConfidence').value = store.confidence || '';
+        document.getElementById('editStoreAddress').value = store.address || '';
+        document.getElementById('editStoreLat').value = store.lat || '';
+        document.getElementById('editStoreLng').value = store.lng || '';
+        document.getElementById('editStoreDishes').value = arrayToEditableText(store.recommend_dishes);
+        document.getElementById('editStoreTags').value = arrayToEditableText(store.tags);
+        document.getElementById('editStoreNote').value = store.note || '';
+      } catch (e) {
+        toast('加载店铺详情失败: ' + e.message, 'error');
+        closeStoreEditModal();
+      }
+    }
+
+    function closeStoreEditModal() {
+      editingStoreId = null;
+      document.getElementById('storeEditModal').classList.remove('open');
+      document.getElementById('storeEditPanel').classList.remove('open');
+    }
+
+    async function saveStoreEdit() {
+      if (!editingStoreId) return;
+      const updates = {
+        name: document.getElementById('editStoreName').value.trim(),
+        category: document.getElementById('editStoreCategory').value.trim(),
+        address: document.getElementById('editStoreAddress').value.trim(),
+        note: document.getElementById('editStoreNote').value.trim(),
+        recommend_dishes: parseEditableList(document.getElementById('editStoreDishes').value),
+        tags: parseEditableList(document.getElementById('editStoreTags').value)
+      };
+      addOptionalNumber(updates, 'avg_price', document.getElementById('editStoreAvgPrice').value);
+      addOptionalNumber(updates, 'rating', document.getElementById('editStoreRating').value);
+      addOptionalNumber(updates, 'confidence', document.getElementById('editStoreConfidence').value);
+      addOptionalNumber(updates, 'lat', document.getElementById('editStoreLat').value);
+      addOptionalNumber(updates, 'lng', document.getElementById('editStoreLng').value);
+      if (!updates.name) return toast('店铺名称不能为空', 'error');
+
+      try {
+        await API.updateStore(editingStoreId, updates);
+        toast('店铺信息已更新', 'success');
+        closeStoreEditModal();
+        loadStoreManage();
+        loadVideos();
+        loadStats();
+      } catch (e) {
+        toast('保存失败: ' + e.message, 'error');
+      }
+    }
+
+    function arrayToEditableText(value) {
+      return Array.isArray(value) ? value.join('\n') : '';
+    }
+
+    function parseEditableList(value) {
+      return String(value || '')
+        .split(/[\n,，、]/)
+        .map(item => item.trim())
+        .filter(Boolean);
+    }
+
+    function addOptionalNumber(target, key, value) {
+      const raw = String(value || '').trim();
+      if (!raw) {
+        target[key] = 0;
+        return;
+      }
+      const num = Number(raw);
+      if (!Number.isNaN(num)) target[key] = num;
     }
 
     async function loadStoreManage() {
@@ -940,24 +1085,40 @@
           const noCoords = !s.lat || !s.lng || (s.lat === 0 && s.lng === 0);
           const bloggerName = s.blogger_name || '未知博主';
           const sourceTitle = s.source_video_title || '未知视频';
+          const dishes = Array.isArray(s.recommend_dishes) ? s.recommend_dishes : [];
+          const tags = Array.isArray(s.tags) ? s.tags : [];
+          const confidence = Number(s.confidence || 0);
           return `
-          <div style="display:flex;align-items:center;gap:10px;padding:10px;border:1px solid var(--border);
-            border-radius:var(--radius-sm);margin-bottom:6px;background:var(--bg-tertiary);flex-wrap:wrap;">
-            <input type="checkbox" class="store-row-checkbox" value="${s.id}">
-            <div style="flex:1;min-width:180px;">
-              <div style="font-weight:600;color:var(--text-primary);font-size:14px;">${escapeHtml(s.name || '')}</div>
-              <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(s.address || '无地址')} · ${escapeHtml(s.category || '未知')}</div>
-              <div title="${escapeHtml(bloggerName + ' · ' + sourceTitle)}" style="font-size:11px;color:var(--text-secondary);margin-top:3px;max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                探店博主：${escapeHtml(bloggerName)} · ${escapeHtml(sourceTitle)}
+          <div style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:8px;background:var(--bg-tertiary);">
+            <div style="display:flex;align-items:flex-start;gap:12px;">
+              <input type="checkbox" class="store-row-checkbox" value="${s.id}" style="margin-top:4px;">
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                  <div style="font-weight:700;color:var(--text-primary);font-size:15px;">${escapeHtml(s.name || '')}</div>
+                  <span class="badge" style="background:rgba(255,107,53,0.12);color:var(--accent);">${escapeHtml(s.category || '未知')}</span>
+                  <span class="badge" style="background:rgba(34,197,94,0.12);color:#22c55e;">${s.rating ? escapeHtml(s.rating) + ' 分' : '暂无评分'}</span>
+                  <span class="badge" style="background:rgba(255,255,255,0.08);color:var(--text-secondary);">¥${escapeHtml(s.avg_price || '-')} / 人</span>
+                </div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:6px;">${escapeHtml(s.address || '无地址')}</div>
+                <div title="${escapeHtml(bloggerName + ' · ' + sourceTitle)}" style="font-size:12px;color:var(--text-secondary);margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                  探店来源：${escapeHtml(bloggerName)} · ${escapeHtml(sourceTitle)}
+                </div>
+                ${dishes.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:9px;">${dishes.map(d => `<span class="store-dish-tag">${escapeHtml(d)}</span>`).join('')}</div>` : ''}
+                ${tags.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;">${tags.map(t => `<span class="analysis-token">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
+                ${s.note ? `<div style="font-size:12px;color:var(--text-secondary);line-height:1.5;margin-top:9px;padding:8px 10px;border-left:3px solid var(--accent);background:rgba(255,107,53,0.06);border-radius:4px;">${escapeHtml(s.note)}</div>` : ''}
+                <div style="font-size:11px;color:var(--text-muted);margin-top:7px;">AI置信度：${confidence ? Math.round(confidence * 100) + '%' : '未记录'}</div>
               </div>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:${noCoords ? '#ef4444' : '#22c55e'};">
-              📍 ${noCoords ? '无坐标' : `${s.lat.toFixed(4)}, ${s.lng.toFixed(4)}`}
-            </div>
-            <div style="display:flex;gap:6px;">
-              <button class="btn btn-secondary btn-xs" onclick="regeocodeStore(${s.id})">🔄 重新编码</button>
-              <button class="btn btn-primary btn-xs" onclick="editStoreCoords(${s.id},${s.lat||0},${s.lng||0})">✏️ 手动坐标</button>
-              <button class="btn btn-danger btn-xs" onclick="deleteStore(${s.id})">🗑️</button>
+              <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;flex-shrink:0;">
+                <div style="font-size:12px;color:${noCoords ? '#ef4444' : '#22c55e'};">
+                  📍 ${noCoords ? '无坐标' : `${Number(s.lat).toFixed(4)}, ${Number(s.lng).toFixed(4)}`}
+                </div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+                  <button class="btn btn-primary btn-xs" onclick="openStoreEditModal(${s.id})">编辑信息</button>
+                  <button class="btn btn-secondary btn-xs" onclick="regeocodeStore(${s.id})">重新编码</button>
+                  <button class="btn btn-secondary btn-xs" onclick="editStoreCoords(${s.id},${s.lat||0},${s.lng||0})">手动坐标</button>
+                  <button class="btn btn-danger btn-xs" onclick="deleteStore(${s.id})">删除</button>
+                </div>
+              </div>
             </div>
           </div>
         `;

@@ -278,11 +278,17 @@ def api_update_store(store_id):
         updates = []
         params = []
 
-        allowed_fields = ['name', 'category', 'lat', 'lng', 'address', 'avg_price', 'rating', 'note']
+        allowed_fields = [
+            'name', 'category', 'lat', 'lng', 'address',
+            'avg_price', 'rating', 'recommend_dishes', 'tags', 'note', 'confidence'
+        ]
         for field in allowed_fields:
             if field in data:
                 updates.append(f'{field}=?')
-                params.append(data[field])
+                value = data[field]
+                if field in ['recommend_dishes', 'tags'] and isinstance(value, list):
+                    value = json.dumps(value, ensure_ascii=False)
+                params.append(value)
 
         if not updates:
             return jsonify({'code': -1, 'error': '没有要更新的字段'}), 400
