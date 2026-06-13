@@ -270,6 +270,33 @@ Page({
     });
   },
 
+  async toggleFavorite() {
+    const store = this.data.selectedStore;
+    if (!store) return;
+    try {
+      const result = store.is_favorited
+        ? await api.unfavoriteStore(store.id)
+        : await api.favoriteStore(store.id);
+      const isFavorited = Boolean(result && result.is_favorited);
+      this.updateStoreFavoriteState(store.id, isFavorited);
+      this.showToast(isFavorited ? "已收藏" : "已取消收藏");
+    } catch (err) {
+      const message = err && err.message ? err.message : "";
+      this.showToast(message.includes("请先登录") || message.includes("401") ? "请先登录" : "收藏操作失败");
+    }
+  },
+
+  updateStoreFavoriteState(storeId, isFavorited) {
+    const stores = this.data.stores.map(item => (
+      item.id === storeId ? { ...item, is_favorited: isFavorited } : item
+    ));
+    const selectedStore = this.data.selectedStore && this.data.selectedStore.id === storeId
+      ? { ...this.data.selectedStore, is_favorited: isFavorited }
+      : this.data.selectedStore;
+    this.setData({ stores, selectedStore });
+    this.applyFilters();
+  },
+
   locateUser(options = {}) {
     const silent = Boolean(options && options.silent);
     this.setData({ locating: true });
@@ -405,7 +432,8 @@ function normalizeStore(raw) {
     ratingShortLabel: getRatingShortLabel(rating),
     ratingClass: rating ? `level-${Math.min(Math.max(Math.round(rating), 1), 5)}` : "empty",
     sourceVideoUrl: getVideoUrl(raw),
-    sourceVideoTitle: raw.source_video_title || "B站探店视频"
+    sourceVideoTitle: raw.source_video_title || "B站探店视频",
+    is_favorited: Boolean(raw.is_favorited)
   };
 }
 

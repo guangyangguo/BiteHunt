@@ -8,7 +8,9 @@
       <view class="nickname">{{profile.nickname}}</view>
       <view class="profile-subtitle">{{profile.subtitle}}</view>
     </view>
-    <button class="login-btn" bindtap="onLoginTap">{{profile.is_logged_in ? '管理' : '登录'}}</button>
+    <button class="login-btn {{profile.is_logged_in ? 'secondary' : ''}}" loading="{{loggingIn}}" bindtap="onLoginTap">
+      {{profile.is_logged_in ? '退出' : '微信登录'}}
+    </button>
   </view>
 
   <view class="stats-grid">
@@ -29,15 +31,15 @@
   <view class="section">
     <view class="section-title">我的探店</view>
     <view class="menu-list">
-      <button class="menu-item" bindtap="onPlaceholderTap" data-name="收藏店铺">
+      <button class="menu-item" bindtap="onProtectedTap" data-name="收藏店铺" data-action="favorites">
         <text>收藏店铺</text>
         <text class="menu-arrow">›</text>
       </button>
-      <button class="menu-item" bindtap="onPlaceholderTap" data-name="浏览历史">
+      <button class="menu-item" bindtap="onProtectedTap" data-name="浏览历史">
         <text>浏览历史</text>
         <text class="menu-arrow">›</text>
       </button>
-      <button class="menu-item" bindtap="onPlaceholderTap" data-name="口味偏好">
+      <button class="menu-item" bindtap="onProtectedTap" data-name="口味偏好">
         <text>口味偏好</text>
         <text class="menu-arrow">›</text>
       </button>
@@ -47,14 +49,44 @@
   <view class="section">
     <view class="section-title">账号与服务</view>
     <view class="menu-list">
-      <button class="menu-item" bindtap="onPlaceholderTap" data-name="个人资料">
+      <button class="menu-item" bindtap="onProtectedTap" data-name="个人资料">
         <text>个人资料</text>
         <text class="menu-arrow">›</text>
       </button>
-      <button class="menu-item" bindtap="onPlaceholderTap" data-name="设置">
+      <button class="menu-item" bindtap="onProtectedTap" data-name="设置">
         <text>设置</text>
         <text class="menu-arrow">›</text>
       </button>
     </view>
+  </view>
+
+  <view wx:if="{{favoritesOpen}}" class="drawer-mask" bindtap="closeFavoritesDrawer"></view>
+  <view class="favorite-drawer {{favoritesOpen ? 'open' : ''}}">
+    <view class="drawer-header">
+      <view>
+        <view class="drawer-title">收藏店铺</view>
+        <view class="drawer-subtitle">共 {{favoriteStores.length}} 家</view>
+      </view>
+      <button class="drawer-close" bindtap="closeFavoritesDrawer">×</button>
+    </view>
+
+    <scroll-view class="drawer-body" scroll-y enhanced show-scrollbar="{{false}}">
+      <view wx:if="{{favoritesLoading}}" class="empty-line">正在加载收藏...</view>
+      <view wx:if="{{!favoritesLoading && !favoriteStores.length}}" class="empty-line">还没有收藏店铺</view>
+      <button
+        wx:for="{{favoriteStores}}"
+        wx:key="id"
+        class="favorite-card"
+        data-id="{{item.id}}"
+        bindtap="openFavoriteStore"
+      >
+        <view class="favorite-name">{{item.name}}</view>
+        <view class="favorite-meta">
+          <text>{{item.categoryText}}</text>
+          <text>{{item.priceText}}</text>
+        </view>
+        <view class="favorite-address">{{item.address || '地址待补充'}}</view>
+      </button>
+    </scroll-view>
   </view>
 </view>

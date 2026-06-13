@@ -14,6 +14,8 @@ class StoreDeleteVideoStateTests(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.original_db_path = database.DB_PATH
+        self.original_database_url = database.DATABASE_URL
+        database.DATABASE_URL = ""
         database.DB_PATH = os.path.join(self.tmpdir, "test.db")
         database.init_db()
         self.blogger_id = database.add_blogger("测试博主", "uid-delete-store")
@@ -26,6 +28,7 @@ class StoreDeleteVideoStateTests(unittest.TestCase):
 
     def tearDown(self):
         database.DB_PATH = self.original_db_path
+        database.DATABASE_URL = self.original_database_url
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_delete_last_store_marks_video_no_store(self):

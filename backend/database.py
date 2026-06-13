@@ -6,13 +6,140 @@ SQLite 数据库初始化 + CRUD 操作
 import sqlite3
 import json
 import os
-from datetime import datetime
+import secrets
+from datetime import date, datetime
+
+import config  # Loads backend/.env into os.environ.
+
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except ImportError:
+    psycopg = None
+    dict_row = None
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'tandian.db')
+DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
+
+
+class HybridRow(dict):
+    """Row compatible with sqlite3.Row usages in this codebase."""
+
+    def __init__(self, data):
+        normalized = {key: _normalize_db_value(value) for key, value in data.items()}
+        super().__init__(normalized)
+        self._values = list(normalized.values())
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._values[key]
+        return super().__getitem__(key)
+
+
+class PgResult:
+    def __init__(self, cursor):
+        self.rowcount = cursor.rowcount if cursor.rowcount is not None else -1
+        self.lastrowid = None
+        self._index = 0
+        if cursor.description:
+            self._rows = [HybridRow(row) for row in cursor.fetchall()]
+            if self._rows and 'id' in self._rows[0]:
+                self.lastrowid = self._rows[0]['id']
+        else:
+            self._rows = []
+
+    def fetchone(self):
+        if self._index >= len(self._rows):
+            return None
+        row = self._rows[self._index]
+        self._index += 1
+        return row
+
+    def fetchall(self):
+        rows = self._rows[self._index:]
+        self._index = len(self._rows)
+        return rows
+
+
+class PgConnection:
+    def __init__(self, database_url):
+        self._conn = psycopg.connect(database_url, row_factory=dict_row)
+        self._lastrowid = None
+
+    def execute(self, query, params=None):
+        sql = _to_postgres_sql(query)
+        params = tuple(params or ())
+        if sql == 'SELECT %s AS id':
+            params = (self._lastrowid,)
+
+        wants_last_id = _is_insert_with_id(sql)
+        if wants_last_id and ' returning ' not in sql.lower():
+            sql = f"{sql} RETURNING id"
+
+        try:
+            cursor = self._conn.execute(sql, params)
+        except psycopg.IntegrityError as exc:
+            self._conn.rollback()
+            raise sqlite3.IntegrityError(str(exc)) from exc
+
+        result = PgResult(cursor)
+        if result.lastrowid is not None:
+            self._lastrowid = result.lastrowid
+        return result
+
+    def cursor(self):
+        return self
+
+    def executescript(self, script):
+        with self._conn.cursor() as cursor:
+            for statement in script.split(';'):
+                statement = statement.strip()
+                if statement:
+                    cursor.execute(statement)
+        return self
+
+    def commit(self):
+        self._conn.commit()
+
+    def close(self):
+        self._conn.close()
+
+
+def _to_postgres_sql(query):
+    sql = query.strip()
+    if sql.lower() == 'select last_insert_rowid()':
+        return 'SELECT %s AS id'
+
+    sql = sql.replace('?', '%s')
+    sql = sql.replace('INSERT OR IGNORE INTO', 'INSERT INTO')
+    sql = sql.replace('insert or ignore into', 'insert into')
+    if 'ON CONFLICT DO NOTHING' not in sql and 'INSERT INTO videos' in sql:
+        sql += ' ON CONFLICT (blogger_id, platform_video_id) DO NOTHING'
+    return sql
+
+
+def _is_insert_with_id(sql):
+    lowered = sql.lower()
+    if not lowered.startswith('insert into '):
+        return False
+    return not lowered.startswith('insert into config ') and not lowered.startswith('insert into user_sessions ')
+
+
+def _normalize_db_value(value):
+    if isinstance(value, datetime):
+        return value.strftime('%Y-%m-%d %H:%M:%S')
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
 
 
 def get_db():
     """获取数据库连接"""
+    if DATABASE_URL:
+        if psycopg is None:
+            raise RuntimeError('DATABASE_URL is configured but psycopg is not installed')
+        return PgConnection(DATABASE_URL)
+
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -24,6 +151,14 @@ def init_db():
     """初始化数据库表"""
     conn = get_db()
     cursor = conn.cursor()
+
+    if DATABASE_URL:
+        from scripts.migrate_sqlite_to_postgres import SCHEMA_SQL
+
+        cursor.executescript(SCHEMA_SQL)
+        conn.commit()
+        conn.close()
+        return
 
     cursor.executescript('''
         -- 博主表
@@ -118,6 +253,41 @@ def init_db():
             FOREIGN KEY (analysis_log_id) REFERENCES analysis_logs(id) ON DELETE SET NULL
         );
 
+        -- 小程序用户
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            openid TEXT NOT NULL UNIQUE,
+            unionid TEXT DEFAULT '',
+            nickname TEXT DEFAULT '探店用户',
+            avatar TEXT DEFAULT '',
+            status TEXT DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- 用户登录会话
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            token TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            status TEXT DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        -- 用户收藏店铺
+        CREATE TABLE IF NOT EXISTS user_favorites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            store_id INTEGER NOT NULL,
+            status TEXT DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE,
+            UNIQUE(user_id, store_id)
+        );
+
         -- 索引
         CREATE INDEX IF NOT EXISTS idx_videos_blogger ON videos(blogger_id);
         CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status);
@@ -127,6 +297,9 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_analysis_steps_video ON analysis_steps(video_id);
         CREATE INDEX IF NOT EXISTS idx_analysis_steps_log ON analysis_steps(analysis_log_id);
         CREATE INDEX IF NOT EXISTS idx_analysis_steps_run ON analysis_steps(run_id);
+        CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_user_favorites_user ON user_favorites(user_id, status);
+        CREATE INDEX IF NOT EXISTS idx_user_favorites_store ON user_favorites(store_id, status);
     ''')
 
     conn.commit()
@@ -172,6 +345,176 @@ def delete_blogger(blogger_id):
     conn.execute("UPDATE bloggers SET status='deleted' WHERE id=?", (blogger_id,))
     conn.commit()
     conn.close()
+
+
+# ==================== User Auth ====================
+
+def get_or_create_user(openid, unionid='', nickname='探店用户', avatar=''):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM users WHERE openid=? AND status='active'",
+        (openid,)
+    ).fetchone()
+    if row:
+        user = dict(row)
+        conn.close()
+        return user
+
+    cursor = conn.execute(
+        """INSERT INTO users (openid, unionid, nickname, avatar)
+           VALUES (?, ?, ?, ?)""",
+        (openid, unionid or '', nickname or '探店用户', avatar or '')
+    )
+    user_id = cursor.lastrowid
+    conn.commit()
+    row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
+def create_user_session(user_id):
+    token = secrets.token_urlsafe(32)
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO user_sessions (token, user_id)
+           VALUES (?, ?)""",
+        (token, user_id)
+    )
+    conn.commit()
+    conn.close()
+    return token
+
+
+def get_user_by_token(token):
+    if not token:
+        return None
+    conn = get_db()
+    row = conn.execute(
+        """SELECT u.*
+           FROM user_sessions s
+           JOIN users u ON u.id=s.user_id
+           WHERE s.token=? AND s.status='active' AND u.status='active'""",
+        (token,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def revoke_user_session(token):
+    if not token:
+        return
+    conn = get_db()
+    conn.execute(
+        "UPDATE user_sessions SET status='revoked', updated_at=CURRENT_TIMESTAMP WHERE token=?",
+        (token,)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_user_profile(user, token=None):
+    if not user:
+        return {
+            'is_logged_in': False,
+            'nickname': '未登录用户',
+            'avatar': '',
+            'stats': {
+                'favorites': 0,
+                'visited': 0,
+                'guides': 0,
+            },
+            'features': {
+                'favorites': False,
+                'history': False,
+                'preferences': False,
+            },
+        }
+
+    return {
+        'is_logged_in': True,
+        'id': user['id'],
+        'nickname': user.get('nickname') or '探店用户',
+        'avatar': user.get('avatar') or '',
+        'token': token,
+        'stats': {
+            'favorites': count_user_favorites(user['id']),
+            'visited': 0,
+            'guides': 0,
+        },
+        'features': {
+            'favorites': True,
+            'history': True,
+            'preferences': True,
+        },
+    }
+
+
+def favorite_store(user_id, store_id):
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO user_favorites (user_id, store_id, status)
+           VALUES (?, ?, 'active')
+           ON CONFLICT(user_id, store_id)
+           DO UPDATE SET status='active', updated_at=CURRENT_TIMESTAMP""",
+        (user_id, store_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def unfavorite_store(user_id, store_id):
+    conn = get_db()
+    conn.execute(
+        "UPDATE user_favorites SET status='deleted', updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND store_id=?",
+        (user_id, store_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def count_user_favorites(user_id):
+    conn = get_db()
+    total = conn.execute(
+        "SELECT COUNT(*) FROM user_favorites WHERE user_id=? AND status='active'",
+        (user_id,)
+    ).fetchone()[0]
+    conn.close()
+    return total
+
+
+def get_user_favorite_store_ids(user_id):
+    if not user_id:
+        return set()
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT store_id FROM user_favorites WHERE user_id=? AND status='active'",
+        (user_id,)
+    ).fetchall()
+    conn.close()
+    return {row['store_id'] for row in rows}
+
+
+def get_user_favorite_stores(user_id):
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT s.*,
+                  b.name as blogger_name,
+                  b.avatar as blogger_avatar,
+                  v.title as source_video_title,
+                  v.url as source_video_url,
+                  v.platform_video_id as source_video_bvid,
+                  v.cover_url as source_video_cover,
+                  f.created_at as favorited_at
+           FROM user_favorites f
+           JOIN stores s ON s.id=f.store_id
+           LEFT JOIN bloggers b ON s.source_blogger_id=b.id
+           LEFT JOIN videos v ON s.source_video_id=v.id
+           WHERE f.user_id=? AND f.status='active' AND s.status='active'
+           ORDER BY f.updated_at DESC, f.created_at DESC""",
+        (user_id,)
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 
 # ==================== Video CRUD ====================
@@ -236,13 +579,18 @@ def get_videos(blogger_id=None, status=None, limit=50, offset=0, keyword=''):
     conn = get_db()
     query = """SELECT v.*,
                       COALESCE(b.name, '未知博主') as blogger_name,
-                      COUNT(CASE WHEN s.status='active' THEN 1 END) as active_store_count
+                      COALESCE(sc.active_store_count, 0) as active_store_count
                FROM videos v
                LEFT JOIN bloggers b ON v.blogger_id=b.id
-               LEFT JOIN stores s ON s.source_video_id=v.id"""
+               LEFT JOIN (
+                   SELECT source_video_id, COUNT(*) as active_store_count
+                   FROM stores
+                   WHERE status='active'
+                   GROUP BY source_video_id
+               ) sc ON sc.source_video_id=v.id"""
     where_sql, params = _video_filters_sql(blogger_id=blogger_id, status=status, keyword=keyword)
     query += where_sql
-    query += " GROUP BY v.id ORDER BY v.publish_date DESC LIMIT ? OFFSET ?"
+    query += " ORDER BY v.publish_date DESC LIMIT ? OFFSET ?"
     params.extend([limit, offset])
     rows = conn.execute(query, params).fetchall()
     conn.close()
@@ -469,7 +817,7 @@ def add_analysis_log(video_id, model_name, raw_response, extracted_data,
             raw_response,
             json.dumps(extracted_data, ensure_ascii=False),
             json.dumps(store_ids, ensure_ascii=False),
-            1 if success else 0, error_message
+            bool(success), error_message
         )
     )
     conn.commit()

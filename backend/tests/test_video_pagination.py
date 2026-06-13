@@ -14,6 +14,8 @@ class VideoPaginationTests(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.original_db_path = database.DB_PATH
+        self.original_database_url = database.DATABASE_URL
+        database.DATABASE_URL = ""
         database.DB_PATH = os.path.join(self.tmpdir, "test.db")
         database.init_db()
         self.blogger_id = database.add_blogger("分页博主", "uid-pagination")
@@ -28,6 +30,7 @@ class VideoPaginationTests(unittest.TestCase):
 
     def tearDown(self):
         database.DB_PATH = self.original_db_path
+        database.DATABASE_URL = self.original_database_url
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_count_and_second_page(self):

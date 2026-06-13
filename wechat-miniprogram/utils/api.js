@@ -3,11 +3,20 @@ const config = require("./config");
 function request(path, data = {}, options = {}) {
   return new Promise((resolve, reject) => {
     const method = options.method || "GET";
+    const url = `${config.apiBase}${path}`;
+    const token = wx.getStorageSync("userToken") || "";
+    const header = Object.assign(
+      method === "POST" ? { "Content-Type": "application/json" } : {},
+      options.header || {}
+    );
+    if (token) {
+      header.Authorization = `Bearer ${token}`;
+    }
     wx.request({
-      url: `${config.apiBase}${path}`,
+      url,
       method,
       data,
-      header: method === "POST" ? { "Content-Type": "application/json" } : undefined,
+      header,
       timeout: options.timeout || 15000,
       success(res) {
         const body = res.data || {};
@@ -15,10 +24,10 @@ function request(path, data = {}, options = {}) {
           resolve(body.data);
           return;
         }
-        reject(new Error(body.error || `HTTP ${res.statusCode}`));
+        reject(new Error(`${body.error || `HTTP ${res.statusCode}`} @ ${url}`));
       },
       fail(err) {
-        reject(new Error(err.errMsg || "网络请求失败"));
+        reject(new Error(`${err.errMsg || "网络请求失败"} @ ${url}`));
       }
     });
   });
@@ -43,6 +52,18 @@ function loginUser(payload = {}) {
 
 function logoutUser() {
   return request("/user/logout", {}, { method: "POST" });
+}
+
+function getUserFavorites() {
+  return request("/user/favorites");
+}
+
+function favoriteStore(storeId) {
+  return request(`/stores/${storeId}/favorite`, {}, { method: "POST" });
+}
+
+function unfavoriteStore(storeId) {
+  return request(`/stores/${storeId}/favorite`, {}, { method: "DELETE" });
 }
 
 function guideRecommend(query, location) {
@@ -134,6 +155,9 @@ module.exports = {
   getUserProfile,
   loginUser,
   logoutUser,
+  getUserFavorites,
+  favoriteStore,
+  unfavoriteStore,
   guideRecommend,
   guideChat,
   guideChatStream

@@ -10,6 +10,7 @@ import io
 import re
 import time
 import uuid
+import hashlib
 
 # 修复 Windows 控制台编码问题
 if sys.platform == 'win32':
@@ -31,7 +32,7 @@ project_dir = os.path.dirname(backend_dir)
 sys.path.insert(0, backend_dir)
 
 from database import (
-    init_db, get_db,
+    init_db, get_db, DATABASE_URL,
     add_blogger, get_all_bloggers, get_blogger, delete_blogger,
     get_videos, get_video, update_video_status,
     count_videos,
@@ -40,6 +41,10 @@ from database import (
     get_all_stores, get_store, delete_store, delete_stores_batch,
     get_analysis_logs, get_analysis_steps,
     get_stats,
+    get_or_create_user, create_user_session, get_user_by_token,
+    revoke_user_session, get_user_profile,
+    favorite_store, unfavorite_store, get_user_favorite_store_ids,
+    get_user_favorite_stores,
 )
 from services.bilibili import (
     get_user_info, search_user, get_video_detail, fetch_video_by_url,
@@ -100,41 +105,84 @@ def api_stats():
         return jsonify({'code': -1, 'error': str(e)}), 500
 
 
-# ==================== API: 用户占位 ====================
+# ==================== API: 用户登录 ====================
 
-def _placeholder_user_profile():
-    return {
-        'is_logged_in': False,
-        'nickname': '未登录用户',
-        'avatar': '',
-        'stats': {
-            'favorites': 0,
-            'visited': 0,
-            'guides': 0,
-        },
-        'features': {
-            'favorites': False,
-            'history': False,
-            'preferences': False,
-        },
-    }
+def _auth_token_from_request():
+    auth = request.headers.get('Authorization', '')
+    if auth.lower().startswith('bearer '):
+        return auth.split(' ', 1)[1].strip()
+    return request.headers.get('X-User-Token', '').strip()
+
+
+def _dev_openid_from_payload(data):
+    # 正式微信登录需要后端使用 wx.login code 调 code2Session 换 openid。
+    # 本地开发先用 device_id 生成稳定用户，避免每次 wx.login code 变化都新建账号。
+    seed = str(data.get('device_id') or data.get('code') or uuid.uuid4())
+    digest = hashlib.sha256(seed.encode('utf-8')).hexdigest()[:32]
+    return f'dev_{digest}'
+
+
+def _current_user():
+    return get_user_by_token(_auth_token_from_request())
+
+
+def _require_user():
+    user = _current_user()
+    if not user:
+        return None, (jsonify({'code': -1, 'error': '请先登录'}), 401)
+    return user, None
+
+
+def _decode_store_json_fields(store):
+    for field in ['recommend_dishes', 'tags']:
+        if isinstance(store.get(field), str):
+            try:
+                store[field] = json.loads(store[field])
+            except (json.JSONDecodeError, TypeError):
+                store[field] = []
+    return store
 
 
 @app.route('/api/user/profile')
 def api_user_profile():
-    return jsonify({'code': 0, 'data': _placeholder_user_profile()})
+    token = _auth_token_from_request()
+    user = get_user_by_token(token)
+    return jsonify({'code': 0, 'data': get_user_profile(user, token if user else None)})
 
 
 @app.route('/api/user/login', methods=['POST'])
 def api_user_login():
-    profile = _placeholder_user_profile()
-    profile['login_provider'] = (request.get_json(silent=True) or {}).get('provider', 'placeholder')
-    return jsonify({'code': 0, 'data': profile, 'message': '用户登录接口已预留'})
+    data = request.get_json(silent=True) or {}
+    openid = data.get('openid') or _dev_openid_from_payload(data)
+    user = get_or_create_user(
+        openid=openid,
+        unionid=data.get('unionid', ''),
+        nickname=data.get('nickname') or '探店用户',
+        avatar=data.get('avatar') or '',
+    )
+    token = create_user_session(user['id'])
+    return jsonify({'code': 0, 'data': get_user_profile(user, token), 'message': '登录成功'})
 
 
 @app.route('/api/user/logout', methods=['POST'])
 def api_user_logout():
-    return jsonify({'code': 0, 'data': _placeholder_user_profile(), 'message': '已退出占位登录态'})
+    revoke_user_session(_auth_token_from_request())
+    return jsonify({'code': 0, 'data': get_user_profile(None), 'message': '已退出登录'})
+
+
+@app.route('/api/user/favorites')
+def api_user_favorites():
+    user, error = _require_user()
+    if error:
+        return error
+    try:
+        stores = get_user_favorite_stores(user['id'])
+        for store in stores:
+            _decode_store_json_fields(store)
+            store['is_favorited'] = True
+        return jsonify({'code': 0, 'data': stores})
+    except Exception as e:
+        return jsonify({'code': -1, 'error': str(e)}), 500
 
 
 # ==================== API: 店铺 ====================
@@ -144,15 +192,13 @@ def api_stores():
     try:
         category = request.args.get('category')
         stores = get_all_stores(category=category)
+        user = _current_user()
+        favorite_ids = get_user_favorite_store_ids(user['id']) if user else set()
 
         # 处理 JSON 字段
         for s in stores:
-            for field in ['recommend_dishes', 'tags']:
-                if isinstance(s.get(field), str):
-                    try:
-                        s[field] = json.loads(s[field])
-                    except (json.JSONDecodeError, TypeError):
-                        s[field] = []
+            _decode_store_json_fields(s)
+            s['is_favorited'] = s['id'] in favorite_ids
 
         return jsonify({'code': 0, 'data': stores})
     except Exception as e:
@@ -166,16 +212,34 @@ def api_store_detail(store_id):
         if not store:
             return jsonify({'code': -1, 'error': '店铺不存在'}), 404
 
-        for field in ['recommend_dishes', 'tags']:
-            if isinstance(store.get(field), str):
-                try:
-                    store[field] = json.loads(store[field])
-                except (json.JSONDecodeError, TypeError):
-                    store[field] = []
+        _decode_store_json_fields(store)
+        user = _current_user()
+        favorite_ids = get_user_favorite_store_ids(user['id']) if user else set()
+        store['is_favorited'] = store['id'] in favorite_ids
 
         return jsonify({'code': 0, 'data': store})
     except Exception as e:
         return jsonify({'code': -1, 'error': str(e)}), 500
+
+
+@app.route('/api/stores/<int:store_id>/favorite', methods=['POST'])
+def api_favorite_store(store_id):
+    user, error = _require_user()
+    if error:
+        return error
+    if not get_store(store_id):
+        return jsonify({'code': -1, 'error': '店铺不存在'}), 404
+    favorite_store(user['id'], store_id)
+    return jsonify({'code': 0, 'data': {'store_id': store_id, 'is_favorited': True}, 'message': '已收藏'})
+
+
+@app.route('/api/stores/<int:store_id>/favorite', methods=['DELETE'])
+def api_unfavorite_store(store_id):
+    user, error = _require_user()
+    if error:
+        return error
+    unfavorite_store(user['id'], store_id)
+    return jsonify({'code': 0, 'data': {'store_id': store_id, 'is_favorited': False}, 'message': '已取消收藏'})
 
 
 @app.route('/api/stores/<int:store_id>', methods=['DELETE'])
@@ -1057,7 +1121,10 @@ if __name__ == '__main__':
 
     init_db()
     print("[OK] 数据库初始化完成")
-    print(f"[OK] 数据库路径: {os.path.join(project_dir, 'data', 'tandian.db')}")
+    if DATABASE_URL:
+        print("[OK] Database: PostgreSQL")
+    else:
+        print(f"[OK] 数据库路径: {os.path.join(project_dir, 'data', 'tandian.db')}")
     print(f"[OK] 前台页面: http://localhost:5000/")
     print(f"[OK] API接口: http://localhost:5000/api/")
     print("=" * 50)

@@ -1,3 +1,4 @@
 flask>=3.0
 requests>=2.31
 openai-whisper
+psycopg[binary]>=3.2

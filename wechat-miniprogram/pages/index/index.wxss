@@ -638,6 +638,29 @@
   text-align: center;
 }
 
+.favorite-btn {
+  flex: 1;
+  height: 78rpx;
+  padding: 0 26rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1rpx solid rgba(255, 107, 53, 0.34);
+  border-radius: 28rpx;
+  color: #ff9a56;
+  background: rgba(255, 107, 53, 0.12);
+  font-size: 27rpx;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+}
+
+.favorite-btn.active {
+  color: #ffffff;
+  border-color: rgba(255, 107, 53, 0.9);
+  background: #ff6b35;
+}
+
 .tag-row {
   display: flex;
   flex-wrap: wrap;
