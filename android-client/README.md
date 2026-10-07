@@ -1,4 +1,4 @@
-# Tandian Android Client
+# BiteHunt Android Client
 
 Android WebView MVP for the public user-facing map page. The admin page remains a normal web page.
 

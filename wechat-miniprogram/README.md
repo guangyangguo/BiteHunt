@@ -1,4 +1,4 @@
-# Tandian WeChat Mini Program
+# BiteHunt WeChat Mini Program
 
 微信小程序用户展示端 MVP。Android 客户端仍保留在 `android-client/`，Web 后台仍使用现有 `frontend/admin.html`。
 
